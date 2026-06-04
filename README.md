@@ -13,9 +13,17 @@ NeoBrain — это веб-приложение для общения с ИИ-п
 - 💾 История диалогов в браузере
 - 🧠 Потоковый ответ (печатает как ChatGPT)
 - 💖 Поддержка проекта (ВТБ)
-
 ## 🚀 Быстрый старт
 
 1. Установи [Ollama](https://ollama.com/) и скачай модель:
    ```bash
    ollama pull qwen2.5-coder:7b
+1. Установи [Ollama](https://ollama.com/) и скачай модель:
+   ```bash
+   ollama pull qwen2.5-coder:7b
+   ```
+
+## 📬 Контакты
+
+- **ВКонтакте:** [Моя страница](https://vk.com/v_rusich007)
+- **GitHub:** [Sbeuvadyarik67](https://github.com/Sbeuvadyarik67)
