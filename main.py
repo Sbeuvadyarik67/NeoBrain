@@ -59,7 +59,6 @@ HTML = """<!DOCTYPE html>
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            position: relative;
         }
         .header {
             padding: 1rem 1.8rem;
@@ -75,7 +74,12 @@ HTML = """<!DOCTYPE html>
         .neon-icon { font-size: 36px; }
         .brand-text h1 { font-size: 1.6rem; color: #eef5ff; }
         .brand-text p { font-size: 0.75rem; opacity: 0.7; color: #eef5ff; }
-        .controls { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; }
+        .controls {
+            display: flex;
+            gap: 0.8rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
         select, button {
             background: #1e293b;
             border: 1px solid #4caf50;
@@ -87,6 +91,11 @@ HTML = """<!DOCTYPE html>
         }
         button { background: #2e7d32; border-color: #4caf50; }
         button:hover { background: #4caf50; }
+        .create-char-btn {
+            background: #f39c12;
+            border-color: #ffaa00;
+        }
+        .create-char-btn:hover { background: #e67e22; }
         .temp-control {
             display: flex;
             align-items: center;
@@ -141,7 +150,6 @@ HTML = """<!DOCTYPE html>
         .input-area button { background: linear-gradient(95deg, #1e88e5, #0d47a1); border: none; padding: 10px 32px; border-radius: 60px; font-weight: bold; color: white; cursor: pointer; }
         .input-area button:hover { background: #42a5f5; }
         
-        /* Темы */
         body.babydoll { background: linear-gradient(135deg, #ffe0f0, #e0f0ff); color: #5a3e5a; }
         body.babydoll .bubble { background: rgba(255, 255, 255, 0.9); border: 1px solid #ffb6c1; color: #5a3e5a; }
         body.summer { background: linear-gradient(135deg, #c0e0a0, #ffcc80); color: #2d4a2d; }
@@ -154,24 +162,22 @@ HTML = """<!DOCTYPE html>
         body.creative .bubble { background: rgba(255, 255, 255, 0.9); border: 1px solid #ffb6c1; color: #3a4a2a; }
         body.warm { background: linear-gradient(135deg, #ffd0d0, #ffe0b0); color: #5a3a2a; }
         body.warm .bubble { background: rgba(255, 255, 255, 0.9); border: 1px solid #ffaa77; color: #5a3a2a; }
-        body.neon .bubble { background: #111a24dd; border: 1px solid rgba(255, 0, 255, 0.4); color: #eef5ff; }
         
-        /* Панель персонажей */
         .characters-panel {
             position: fixed;
             left: 0;
             top: 0;
-            width: 260px;
+            width: 280px;
             height: 100vh;
             background: rgba(10, 20, 40, 0.95);
             backdrop-filter: blur(16px);
             border-right: 1px solid cyan;
-            transform: translateX(-260px);
+            transform: translateX(-100%);
             transition: transform 0.3s ease;
-            z-index: 2000;
+            z-index: 9999;
             display: flex;
             flex-direction: column;
-            padding: 70px 10px 20px 10px;
+            padding: 70px 15px 20px 15px;
             gap: 10px;
         }
         .characters-panel.open { transform: translateX(0); }
@@ -179,18 +185,30 @@ HTML = """<!DOCTYPE html>
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 5px 10px;
+            padding: 8px 10px;
             color: white;
+            background: rgba(0,0,0,0.5);
+            border-radius: 12px;
+            margin-bottom: 5px;
         }
-        #togglePanelBtn {
-            background: none;
+        .panel-toggle-btn {
+            position: fixed;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            background: cyan;
             border: none;
-            color: cyan;
-            font-size: 1.4rem;
+            color: black;
+            font-size: 1.2rem;
+            padding: 12px 6px;
+            border-radius: 0 12px 12px 0;
             cursor: pointer;
-            padding: 0 8px;
+            z-index: 10000;
             font-weight: bold;
+            transition: 0.2s;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.3);
         }
+        .panel-toggle-btn:hover { background: #00cccc; padding-right: 10px; }
         #charactersList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
         .character-item {
             padding: 10px;
@@ -204,18 +222,17 @@ HTML = """<!DOCTYPE html>
         .character-item.active { background: rgba(0, 255, 255, 0.3); border-left: 3px solid cyan; }
         .character-name { color: white; font-size: 0.9rem; }
         .delete-char { background: none; border: none; color: #ff6b6b; cursor: pointer; font-size: 1rem; }
-        .add-char-btn { background: #4caf50; border: none; padding: 8px; border-radius: 20px; color: white; cursor: pointer; margin-top: 10px; }
-        .character-modal {
+        .modal {
             display: none;
             position: fixed;
             top: 0; left: 0;
             width: 100%; height: 100%;
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.8);
             justify-content: center;
             align-items: center;
-            z-index: 3000;
+            z-index: 20000;
         }
-        .character-modal-content {
+        .modal-content {
             background: #0f172a;
             border: 1px solid cyan;
             border-radius: 2rem;
@@ -224,15 +241,19 @@ HTML = """<!DOCTYPE html>
             max-width: 400px;
             color: white;
         }
-        .character-modal-content input, .character-modal-content textarea {
+        .modal-content input, .modal-content textarea {
             width: 100%;
             margin: 10px 0;
-            padding: 8px;
+            padding: 10px;
             background: #1e293b;
             border: 1px solid cyan;
             border-radius: 12px;
             color: white;
+            font-size: 0.9rem;
         }
+        .modal-content textarea { resize: vertical; }
+        .modal-buttons { display: flex; gap: 10px; margin-top: 15px; }
+        .modal-buttons button { flex: 1; }
     </style>
 </head>
 <body>
@@ -240,11 +261,10 @@ HTML = """<!DOCTYPE html>
     <div id="charactersPanel" class="characters-panel">
         <div class="panel-header">
             <span>🎭 Персонажи</span>
-            <button id="togglePanelBtn">▶</button>
         </div>
         <div id="charactersList"></div>
-        <button id="addCharacterBtn" class="add-char-btn">➕ Создать</button>
     </div>
+    <button id="togglePanelBtn" class="panel-toggle-btn">▶</button>
     <div class="header">
         <div class="brand">
             <div class="neon-icon">🧠✨</div>
@@ -270,6 +290,7 @@ HTML = """<!DOCTYPE html>
                 <span id="tempValue">5</span>
             </div>
             <button id="clearBtn">🗑 Очистить</button>
+            <button id="addCharacterBtn" class="create-char-btn">➕ Создать персонажа</button>
         </div>
     </div>
     <div class="chat-window" id="chatWindow">
@@ -288,8 +309,20 @@ HTML = """<!DOCTYPE html>
     </div>
 </div>
 
+<div id="modal" class="modal">
+    <div class="modal-content">
+        <h3>➕ Новый персонаж</h3>
+        <input type="text" id="modalCharName" placeholder="Имя персонажа">
+        <textarea id="modalCharDesc" rows="3" placeholder="Опишите характер, стиль речи, роль...&#10;Пример: Ты — старый маг, говоришь загадками, любишь шутить."></textarea>
+        <div class="modal-buttons">
+            <button id="modalSaveBtn">Сохранить</button>
+            <button id="modalCancelBtn">Отмена</button>
+        </div>
+    </div>
+</div>
+
 <script>
-    // Элементы
+    // ДОМ элементы
     const chatWindow = document.getElementById('chatWindow');
     const msgInput = document.getElementById('msgInput');
     const sendBtn = document.getElementById('sendBtn');
@@ -299,36 +332,48 @@ HTML = """<!DOCTYPE html>
     const temperatureSlider = document.getElementById('temperatureSlider');
     const tempValue = document.getElementById('tempValue');
     const themeSelect = document.getElementById('themeSelect');
-    const togglePanelBtn = document.getElementById('togglePanelBtn');
+    const toggleBtn = document.getElementById('togglePanelBtn');
     const charactersPanel = document.getElementById('charactersPanel');
     const charactersList = document.getElementById('charactersList');
     const addCharacterBtn = document.getElementById('addCharacterBtn');
+    const modal = document.getElementById('modal');
+    const modalCharName = document.getElementById('modalCharName');
+    const modalCharDesc = document.getElementById('modalCharDesc');
+    const modalSaveBtn = document.getElementById('modalSaveBtn');
+    const modalCancelBtn = document.getElementById('modalCancelBtn');
 
-    // Температура
+    // === ТЕМПЕРАТУРА ===
     if (temperatureSlider) {
         temperatureSlider.addEventListener('input', () => {
             tempValue.innerText = temperatureSlider.value;
         });
     }
 
-    // Загрузка моделей
+    // === МОДЕЛИ ===
     async function loadModels() {
-        try {
-            const res = await fetch('/models');
-            const data = await res.json();
-            modelSelect.innerHTML = '';
-            if (data.models && data.models.length) {
-                data.models.forEach(m => {
-                    const opt = document.createElement('option');
-                    opt.value = m;
-                    opt.textContent = m.includes('7b') ? '🧠 Креативная (7b)' : '⚡ Быстрая (1.5b)';
-                    modelSelect.appendChild(opt);
-                });
-            }
-        } catch(e) { console.error(e); }
-    }
+    try {
+        const res = await fetch('/models');
+        const data = await res.json();
+        modelSelect.innerHTML = '';
+        if (data.models && data.models.length) {
+            data.models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m;
+                let name = m;
+                if (m === 'mistral:7b') name = '🧠 Mistral 7b — умная, хорошо держит роль (тяжелее)';
+                else if (m === 'llama3.2:3b') name = '⚡ Llama 3.2 3b — быстрая, лёгкая (менее креативная)';
+                else if (m === 'qwen2.5-coder:7b') name = '💻 Qwen 7b — кодовая, не для ролей (средняя)';
+                else if (m === 'qwen2.5-coder:1.5b') name = '🚀 Qwen 1.5b — очень быстрая, но простая';
+                else if (m === 'llama3.1:8b') name = '🧠 Llama 3.1 8b — отличная грамматика, умная, хорошо держит роль (рекомендую)';
+                else name = m;
+                opt.textContent = name;
+                modelSelect.appendChild(opt);
+            });
+        }
+    } catch(e) { console.error(e); }
+}
 
-    // Сообщения
+    // === СООБЩЕНИЯ ===
     function addMessage(text, isUser) {
         const div = document.createElement('div');
         div.className = `msg ${isUser ? 'user-msg' : 'ai-msg'}`;
@@ -355,7 +400,7 @@ HTML = """<!DOCTYPE html>
     function showTyping() { typingBlock.style.display = 'flex'; }
     function hideTyping() { typingBlock.style.display = 'none'; }
 
-    // Персонажи
+    // === ПЕРСОНАЖИ ===
     let characters = [];
     let activeCharacterId = null;
     const STORAGE_CHARS = 'neobrain_chars';
@@ -413,47 +458,42 @@ HTML = """<!DOCTYPE html>
         }
     }
 
-    // Модальное окно создания персонажа
-    const modal = document.createElement('div');
-    modal.className = 'character-modal';
-    modal.innerHTML = `
-        <div class="character-modal-content">
-            <h3>Новый персонаж</h3>
-            <input type="text" id="modalCharName" placeholder="Имя персонажа">
-            <textarea id="modalCharDesc" rows="3" placeholder="Опиши характер, стиль речи, роль..."></textarea>
-            <button id="modalSaveBtn">Сохранить</button>
-            <button id="modalCancelBtn">Отмена</button>
-        </div>
-    `;
-    document.body.appendChild(modal);
-
+    // === МОДАЛЬНОЕ ОКНО ===
     if (addCharacterBtn) {
         addCharacterBtn.onclick = () => {
-            document.getElementById('modalCharName').value = '';
-            document.getElementById('modalCharDesc').value = '';
+            modalCharName.value = '';
+            modalCharDesc.value = '';
             modal.style.display = 'flex';
         };
     }
-    document.getElementById('modalSaveBtn').onclick = () => {
-        const name = document.getElementById('modalCharName').value.trim();
-        const desc = document.getElementById('modalCharDesc').value.trim();
-        if (name && desc) {
-            addCharacter(name, desc);
-            modal.style.display = 'none';
-        } else alert('Заполните имя и описание');
+    if (modalSaveBtn) {
+        modalSaveBtn.onclick = () => {
+            const name = modalCharName.value.trim();
+            const desc = modalCharDesc.value.trim();
+            if (name && desc) {
+                addCharacter(name, desc);
+                modal.style.display = 'none';
+            } else {
+                alert('Заполните имя и описание персонажа');
+            }
+        };
+    }
+    if (modalCancelBtn) {
+        modalCancelBtn.onclick = () => modal.style.display = 'none';
+    }
+    window.onclick = (e) => {
+        if (e.target === modal) modal.style.display = 'none';
     };
-    document.getElementById('modalCancelBtn').onclick = () => modal.style.display = 'none';
-    window.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
 
-    // Панель персонажей
-    if (togglePanelBtn && charactersPanel) {
-        togglePanelBtn.onclick = () => {
+    // === КНОПКА ПАНЕЛИ ===
+    if (toggleBtn && charactersPanel) {
+        toggleBtn.onclick = () => {
             charactersPanel.classList.toggle('open');
-            togglePanelBtn.innerText = charactersPanel.classList.contains('open') ? '◀' : '▶';
+            toggleBtn.innerText = charactersPanel.classList.contains('open') ? '◀' : '▶';
         };
     }
 
-    // Отправка сообщения
+    // === ОТПРАВКА СООБЩЕНИЯ ===
     async function sendMessage() {
         const text = msgInput.value.trim();
         if (!text) return;
@@ -513,7 +553,7 @@ HTML = """<!DOCTYPE html>
         }
     }
 
-    // Темы
+    // === ТЕМЫ ===
     if (themeSelect) {
         const savedTheme = localStorage.getItem('neobrain_theme');
         if (savedTheme) {
@@ -526,6 +566,7 @@ HTML = """<!DOCTYPE html>
         });
     }
 
+    // === ЗАПУСК ===
     loadCharacters();
     loadModels();
     sendBtn.onclick = sendMessage;
