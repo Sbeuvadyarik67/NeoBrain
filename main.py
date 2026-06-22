@@ -1,10 +1,11 @@
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 import requests
 import uvicorn
 import subprocess
 import time
 import socket
+import json
 
 def start_ollama():
     try:
@@ -35,683 +36,1023 @@ HTML = """<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NeoBrain | AI чат</title>
     <style>
+        /* ===== ОБЩИЕ СТИЛИ ===== */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background: radial-gradient(circle at 20% 30%, #0a0f1e, #03060c);
-            font-family: 'Inter', system-ui, sans-serif;
+            font-family: system-ui, -apple-system, sans-serif;
+            min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 100vh;
             padding: 1rem;
+            transition: all 0.3s;
         }
-        .chat {
-            max-width: 1000px;
+        
+        /* ===== ОСНОВНОЙ КОНТЕЙНЕР ===== */
+        .chat-app {
+            max-width: 1200px;
             width: 100%;
             height: 90vh;
-            background: rgba(10, 20, 30, 0.65);
             backdrop-filter: blur(14px);
             border-radius: 2rem;
-            border: 1px solid rgba(0, 255, 255, 0.6);
-            box-shadow: 0 0 15px rgba(255, 0, 255, 0.3);
+            border: 2px solid var(--neon, #00ffff);
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            position: relative;
+            transition: all 0.3s;
         }
+        .chat-app::before {
+            content: '';
+            position: absolute;
+            top: -30px; left: -30px; right: -30px; bottom: -30px;
+            border-radius: 3rem;
+            z-index: -1;
+            filter: blur(30px);
+            opacity: 0.25;
+            background: var(--neon, #00ffff);
+            transition: all 0.3s;
+        }
+        
+        /* ===== ШАПКА ===== */
         .header {
-            padding: 1rem 1.8rem;
-            background: rgba(0, 20, 30, 0.6);
-            border-bottom: 1px solid rgba(255, 0, 255, 0.4);
+            padding: 0.8rem 1.8rem;
+            background: rgba(0,0,0,0.4);
             display: flex;
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 1rem;
-        }
-        .brand { display: flex; align-items: center; gap: 14px; }
-        .neon-icon { font-size: 36px; }
-        .brand-text h1 { font-size: 1.6rem; color: #eef5ff; }
-        .brand-text p { font-size: 0.75rem; opacity: 0.7; color: #eef5ff; }
-        .controls {
-            display: flex;
             gap: 0.8rem;
-            align-items: center;
-            flex-wrap: wrap;
+            flex-shrink: 0;
         }
-        select, button {
-            background: #1e293b;
-            border: 1px solid #4caf50;
-            padding: 8px 16px;
-            border-radius: 2rem;
-            font-size: 0.85rem;
-            cursor: pointer;
-            color: white;
-        }
-        button { background: #2e7d32; border-color: #4caf50; }
-        button:hover { background: #4caf50; }
-        .create-char-btn {
-            background: #f39c12;
-            border-color: #ffaa00;
-        }
-        .create-char-btn:hover { background: #e67e22; }
-        .temp-control {
+        .brand {
             display: flex;
             align-items: center;
             gap: 12px;
-            background: #1e293b;
-            padding: 4px 16px;
-            border-radius: 2rem;
         }
-        .temp-control span { color: white; font-size: 0.85rem; }
-        input[type="range"] { width: 120px; cursor: pointer; background: #4caf50; height: 4px; border-radius: 5px; }
-        #tempValue { color: #4caf50; font-weight: bold; min-width: 35px; }
-        .chat-window { flex: 1; overflow-y: auto; padding: 1.5rem; display: flex; flex-direction: column; gap: 18px; }
-        .msg { display: flex; gap: 12px; max-width: 80%; animation: slideUp 0.25s ease; }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
-        .user-msg { align-self: flex-end; flex-direction: row-reverse; }
-        .ai-msg { align-self: flex-start; }
+        .brand h1 {
+            font-size: 1.4rem;
+            color: #fff;
+            text-shadow: 0 0 20px var(--neon, #00ffff);
+        }
+        .brand p {
+            font-size: 0.7rem;
+            opacity: 0.6;
+            color: #fff;
+        }
+        
+        /* ===== ПАНЕЛЬ УПРАВЛЕНИЯ ===== */
+        .controls {
+            display: flex;
+            gap: 0.6rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .controls select, .controls button {
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--neon, #00ffff);
+            padding: 6px 14px;
+            border-radius: 2rem;
+            color: #fff;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .controls select:hover, .controls button:hover {
+            background: var(--neon, #00ffff);
+            color: #000;
+        }
+        .controls select option {
+            background: #1a1a2e;
+            color: #fff;
+        }
+        
+        /* ===== ВЫПАДАЮЩЕЕ МЕНЮ ТЕМ ===== */
+        .theme-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .theme-dropdown-content {
+            display: none;
+            position: absolute;
+            background: rgba(0,0,0,0.85);
+            border: 1px solid var(--neon, #00ffff);
+            border-radius: 1rem;
+            padding: 8px;
+            z-index: 100;
+            min-width: 180px;
+            right: 0;
+            top: 40px;
+        }
+        .theme-dropdown-content.show {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            justify-content: center;
+        }
+        .theme-btn {
+            background: none;
+            border: 1px solid var(--neon, #00ffff);
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            color: #fff;
+            transition: all 0.3s;
+        }
+        .theme-btn:hover {
+            transform: scale(1.15);
+            box-shadow: 0 0 20px var(--neon, #00ffff);
+        }
+        .theme-btn.active {
+            background: var(--neon, #00ffff);
+            color: #000;
+        }
+        
+        /* ===== ОКНО ЧАТА ===== */
+        .chat-window {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.2rem 1.8rem;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        
+        /* ===== СООБЩЕНИЯ ===== */
+        .msg {
+            display: flex;
+            gap: 12px;
+            max-width: 80%;
+            animation: slideUp 0.3s ease;
+        }
+        .user-msg {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+        .ai-msg {
+            align-self: flex-start;
+        }
         .avatar {
-            width: 42px; height: 42px;
-            background: linear-gradient(145deg, #1e2a3a, #0a121f);
-            border-radius: 28px;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--neon, #00ffff);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.6rem;
+            font-size: 1.4rem;
+            flex-shrink: 0;
+            box-shadow: 0 0 10px var(--neon, #00ffff);
         }
         .bubble {
-            background: rgba(20, 30, 45, 0.7);
-            backdrop-filter: blur(12px);
-            border: none;
-            border-radius: 28px;
-            padding: 12px 20px;
+            padding: 10px 18px;
+            border-radius: 24px;
             font-size: 0.95rem;
-            color: #eef5ff;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-            transition: all 0.2s ease;
+            background: rgba(10,10,30,0.5);
+            backdrop-filter: blur(8px);
+            color: #fff;
+            border: 1px solid var(--neon, #00ffff);
+            box-shadow: 0 0 8px var(--neon, #00ffff);
+            word-break: break-word;
+        }
+        .user-msg .bubble {
+            background: rgba(40,80,140,0.8);
+            border-bottom-right-radius: 8px;
         }
         .ai-msg .bubble {
             border-bottom-left-radius: 8px;
-            background: rgba(30, 40, 60, 0.7);
         }
-        .user-msg .bubble {
-            background: rgba(40, 80, 140, 0.8);
-            border-bottom-right-radius: 8px;
-            color: white;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+        .msg-time {
+            font-size: 0.6rem;
+            opacity: 0.5;
+            padding-left: 56px;
+            color: #fff;
         }
-        .msg-time { font-size: 0.65rem; margin-top: 5px; padding-left: 56px; opacity: 0.6; color: #aaccff; }
-        .typing-block { display: none; align-items: center; gap: 12px; padding-left: 1.5rem; }
-        .typing-dots { background: rgba(17, 26, 36, 0.8); padding: 10px 20px; border-radius: 30px; display: flex; gap: 8px; }
-        .typing-dots span { width: 8px; height: 8px; background: #88ccff; border-radius: 50%; animation: wave 1.2s infinite; }
-        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
-        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
-        @keyframes wave { 0%,60%,100% { opacity: 0.4; transform: translateY(0px); } 30% { opacity: 1; transform: translateY(-4px); } }
+        .user-msg .msg-time {
+            text-align: right;
+            padding-right: 10px;
+        }
+        
+        /* ===== ПОЛЕ ВВОДА ===== */
         .input-area {
-            background: rgba(0, 0, 0, 0.3);
-            border-top: 1px solid cyan;
-            padding: 1rem 1.5rem;
+            background: rgba(0,0,0,0.3);
+            border-top: 1px solid var(--neon, #00ffff);
+            padding: 0.8rem 1.5rem;
             display: flex;
             gap: 12px;
             align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
         }
-        .input-area input { flex: 1; background: #0e1a24; border: 1px solid magenta; padding: 12px 20px; border-radius: 60px; font-size: 0.95rem; outline: none; color: white; }
-        .input-area button { background: linear-gradient(95deg, #1e88e5, #0d47a1); border: none; padding: 10px 32px; border-radius: 60px; font-weight: bold; color: white; cursor: pointer; }
-        .input-area button:hover { background: #42a5f5; }
-        
-        body.babydoll { background: linear-gradient(135deg, #ffe0f0, #e0f0ff); color: #5a3e5a; }
-        body.babydoll .bubble { background: rgba(255, 255, 255, 0.9); border: 1px solid #ffb6c1; color: #5a3e5a; }
-        body.summer { background: linear-gradient(135deg, #c0e0a0, #ffcc80); color: #2d4a2d; }
-        body.summer .bubble { background: rgba(255, 255, 255, 0.9); border: 1px solid #ffa500; color: #2d4a2d; }
-        body.beach { background: linear-gradient(135deg, #b0e0ff, #fff0a0); color: #1a3a6a; }
-        body.beach .bubble { background: rgba(255, 255, 255, 0.9); border: 1px solid #ffd700; color: #1a3a6a; }
-        body.digital { background: linear-gradient(135deg, #ffaa70, #c080ff); color: #2e1a4a; }
-        body.digital .bubble { background: rgba(0, 0, 0, 0.8); border: 1px solid #ff8c00; color: #f0f0f0; }
-        body.creative { background: linear-gradient(135deg, #ffc0cb, #a0b080); color: #3a4a2a; }
-        body.creative .bubble { background: rgba(255, 255, 255, 0.9); border: 1px solid #ffb6c1; color: #3a4a2a; }
-        body.warm { background: linear-gradient(135deg, #ffd0d0, #ffe0b0); color: #5a3a2a; }
-        body.warm .bubble { background: rgba(255, 255, 255, 0.9); border: 1px solid #ffaa77; color: #5a3a2a; }
-        
-        .characters-panel {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 280px;
-            height: 100vh;
-            background: rgba(10, 20, 40, 0.95);
-            backdrop-filter: blur(16px);
-            border-right: 1px solid cyan;
-            transform: translateX(-100%);
-            transition: transform 0.3s ease;
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            padding: 70px 15px 20px 15px;
-            gap: 10px;
+        .input-area input {
+            flex: 1;
+            max-width: 700px;
+            padding: 10px 18px;
+            border-radius: 60px;
+            border: 1px solid var(--neon, #00ffff);
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            font-size: 0.95rem;
+            outline: none;
+            transition: all 0.3s;
         }
-        .characters-panel.open { transform: translateX(0); }
-        .panel-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 10px;
-            color: white;
-            background: rgba(0,0,0,0.5);
-            border-radius: 12px;
-            margin-bottom: 5px;
+        .input-area input:focus {
+            border-color: var(--neon, #00ffff);
+            box-shadow: 0 0 15px var(--neon, #00ffff);
         }
-        .panel-toggle-btn {
-            position: fixed;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            background: cyan;
+        .input-area input::placeholder {
+            color: rgba(255,255,255,0.4);
+        }
+        .input-area button {
+            background: var(--neon, #00ffff);
             border: none;
-            color: black;
-            font-size: 1.2rem;
-            padding: 12px 6px;
-            border-radius: 0 12px 12px 0;
-            cursor: pointer;
-            z-index: 10000;
+            padding: 10px 28px;
+            border-radius: 60px;
             font-weight: bold;
-            transition: 0.2s;
-            box-shadow: 2px 0 8px rgba(0,0,0,0.3);
-        }
-        .panel-toggle-btn:hover { background: #00cccc; padding-right: 10px; }
-        #charactersList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-        .character-item {
-            padding: 10px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 12px;
+            color: #000;
             cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            transition: all 0.3s;
+            flex-shrink: 0;
         }
-        .character-item.active { background: rgba(0, 255, 255, 0.3); border-left: 3px solid cyan; }
-        .character-name { color: white; font-size: 0.9rem; }
-        .delete-char { background: none; border: none; color: #ff6b6b; cursor: pointer; font-size: 1rem; }
+        .input-area button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 25px var(--neon, #00ffff);
+        }
+        
+        /* ===== ИНДИКАТОР ПЕЧАТИ ===== */
+        .typing-block {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 0.5rem 1.5rem;
+            flex-shrink: 0;
+        }
+        .typing-dots span {
+            width: 8px;
+            height: 8px;
+            background: var(--neon, #00ffff);
+            border-radius: 50%;
+            display: inline-block;
+            animation: wave 1.2s infinite;
+            box-shadow: 0 0 10px var(--neon, #00ffff);
+        }
+        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes wave {
+            0%,60%,100% { opacity: 0.4; transform: translateY(0); }
+            30% { opacity: 1; transform: translateY(-4px); }
+        }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        /* ===== МОДАЛЬНЫЕ ОКНА ===== */
         .modal {
             display: none;
             position: fixed;
             top: 0; left: 0;
             width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.9);
+            backdrop-filter: blur(8px);
             justify-content: center;
             align-items: center;
-            z-index: 20000;
+            z-index: 1000;
         }
         .modal-content {
-            background: #0f172a;
-            border: 1px solid cyan;
+            background: rgba(0,0,0,0.8);
+            border: 1px solid var(--neon, #00ffff);
             border-radius: 2rem;
             padding: 2rem;
             width: 90%;
             max-width: 400px;
-            color: white;
+            color: #fff;
+            box-shadow: 0 0 40px var(--neon, #00ffff);
+        }
+        .modal-content h3 {
+            margin-bottom: 1rem;
+            color: var(--neon, #00ffff);
+            text-shadow: 0 0 20px var(--neon, #00ffff);
         }
         .modal-content input, .modal-content textarea {
             width: 100%;
-            margin: 10px 0;
+            margin: 8px 0;
             padding: 10px;
-            background: #1e293b;
-            border: 1px solid cyan;
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--neon, #00ffff);
             border-radius: 12px;
-            color: white;
-            font-size: 0.9rem;
+            color: #fff;
+            font-size: 0.95rem;
         }
-        .modal-content textarea { resize: vertical; }
-        .modal-buttons { display: flex; gap: 10px; margin-top: 15px; }
-        .modal-buttons button { flex: 1; }
-        
-        /* Тема Космос — финальная, без лишних анимаций */
-        body.cosmos {
-            background: radial-gradient(ellipse at 30% 40%, #070b1a, #010308);
-            color: #eef5ff;
-            position: relative;
+        .modal-content textarea {
+            resize: vertical;
+            min-height: 80px;
         }
-        body.cosmos::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            background: radial-gradient(circle at 20% 30%, rgba(70, 100, 200, 0.15), transparent 60%),
-                        radial-gradient(circle at 80% 70%, rgba(150, 80, 220, 0.1), transparent 70%);
-            z-index: 0;
+        .modal-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
         }
-        body.cosmos::after {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            background-image: radial-gradient(2px 2px at 15% 30%, rgba(255,255,255,0.4), rgba(0,0,0,0)),
-                              radial-gradient(1px 1px at 75% 80%, rgba(255,255,255,0.3), rgba(0,0,0,0)),
-                              radial-gradient(3px 3px at 40% 60%, rgba(255,255,255,0.2), rgba(0,0,0,0));
-            background-size: 250px 250px, 350px 350px, 180px 180px;
-            background-repeat: no-repeat;
-            opacity: 0.6;
-            z-index: 0;
-            animation: starsFlicker 8s ease-in-out infinite alternate;
-        }
-        @keyframes starsFlicker {
-            0% { opacity: 0.4; }
-            100% { opacity: 0.8; }
-        }
-        body.cosmos .chat-glass {
-            background: rgba(3, 8, 20, 0.6);
-            backdrop-filter: blur(14px);
-            border: 1px solid rgba(80, 130, 220, 0.4);
-            box-shadow: 0 0 30px rgba(40, 80, 160, 0.25);
-        }
-        body.cosmos .bubble {
-            background: rgba(20, 30, 65, 0.7);
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(80, 130, 220, 0.45);
-            color: #eef5ff;
-            transition: all 0.2s;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-        }
-        body.cosmos .bubble:hover {
-            border-color: rgba(120, 170, 255, 0.8);
-            box-shadow: 0 0 18px rgba(70, 130, 255, 0.4);
-        }
-        body.cosmos .user-msg .bubble {
-            background: rgba(40, 60, 110, 0.75);
-            border: 1px solid rgba(60, 140, 230, 0.6);
-        }
-        body.cosmos .input-area input {
-            background: rgba(10, 18, 35, 0.85);
-            border: 1px solid #2a5f8a;
-            color: white;
-            backdrop-filter: blur(4px);
-        }
-        body.cosmos .input-area button {
-            background: linear-gradient(135deg, #1e3a5f, #0f2440);
+        .modal-buttons button {
+            flex: 1;
+            padding: 8px;
+            border-radius: 2rem;
+            cursor: pointer;
             border: none;
-            box-shadow: 0 0 12px #2a6f9a;
-            transition: 0.2s;
+            font-weight: bold;
+            transition: all 0.3s;
         }
-        body.cosmos .input-area button:hover {
-            box-shadow: 0 0 22px #4a9fff;
-            transform: scale(0.98);
+        .modal-buttons button:first-child {
+            background: var(--neon, #00ffff);
+            color: #000;
+            box-shadow: 0 0 20px var(--neon, #00ffff);
         }
-        body.cosmos .controls select, 
-        body.cosmos .controls button,
-        body.cosmos .character-selector select,
-        body.cosmos .character-selector button {
-            background: #0f1a2a;
-            border-color: #2a6f9a;
-            color: white;
+        .modal-buttons button:first-child:hover {
+            transform: scale(1.02);
         }
-        body.cosmos .chat-window::-webkit-scrollbar-thumb {
-            background: #2a6f9a;
+        .modal-buttons button:last-child {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
         }
-        body.cosmos .typing-dots span {
-            background: #7abfff;
+        
+        /* ===== НАСТРОЙКИ ===== */
+        #settingsModal .modal-box {
+            background: rgba(10,10,30,0.9);
+            border: 2px solid var(--neon, #00ffff);
+            border-radius: 2rem;
+            padding: 2.5rem;
+            width: 90%;
+            max-width: 400px;
+            color: #fff;
+            text-align: center;
+            box-shadow: 0 0 60px var(--neon, #00ffff);
+        }
+        #settingsModal .modal-box h2 {
+            font-size: 1.6rem;
+            margin-bottom: 1.5rem;
+            color: var(--neon, #00ffff);
+            text-shadow: 0 0 20px var(--neon, #00ffff);
+        }
+        #settingsModal .modal-box .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+        }
+        #settingsModal .modal-box .btn-group button {
+            padding: 12px 24px;
+            border-radius: 2rem;
+            border: 2px solid var(--neon, #00ffff);
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        #settingsModal .modal-box .btn-group button:hover {
+            background: var(--neon, #00ffff);
+            color: #000;
+            transform: scale(1.02);
+            box-shadow: 0 0 30px var(--neon, #00ffff);
+        }
+        #settingsModal .modal-box .btn-group button.default-btn {
+            border-color: #4caf50;
+        }
+        #settingsModal .modal-box .btn-group button.default-btn:hover {
+            background: #4caf50;
+        }
+        #settingsModal .modal-box .close-btn {
+            margin-top: 1.5rem;
+            padding: 8px 24px;
+            border-radius: 2rem;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: none;
+            color: #fff;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+        }
+        #settingsModal .modal-box .close-btn:hover {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        /* ===== ПРИВЕТСТВИЕ ===== */
+        #welcomeModal .modal-box {
+            background: rgba(10,10,30,0.9);
+            border: 2px solid var(--neon, #00ffff);
+            border-radius: 2rem;
+            padding: 2.5rem;
+            width: 90%;
+            max-width: 500px;
+            color: #fff;
+            text-align: center;
+            box-shadow: 0 0 60px var(--neon, #00ffff);
+        }
+        #welcomeModal .modal-box h2 {
+            font-size: 1.8rem;
+            margin-bottom: 0.5rem;
+            color: var(--neon, #00ffff);
+            text-shadow: 0 0 20px var(--neon, #00ffff);
+        }
+        #welcomeModal .modal-box p {
+            font-size: 0.95rem;
+            opacity: 0.8;
+            margin: 0.5rem 0 1.5rem;
+            line-height: 1.5;
+        }
+        #welcomeModal .modal-box .btn-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+        }
+        #welcomeModal .modal-box .btn-group button {
+            padding: 12px 24px;
+            border-radius: 2rem;
+            border: 2px solid var(--neon, #00ffff);
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        #welcomeModal .modal-box .btn-group button:hover {
+            background: var(--neon, #00ffff);
+            color: #000;
+            transform: scale(1.02);
+            box-shadow: 0 0 30px var(--neon, #00ffff);
+        }
+        #welcomeModal .modal-box .btn-group button.default-btn {
+            border-color: #4caf50;
+        }
+        #welcomeModal .modal-box .btn-group button.default-btn:hover {
+            background: #4caf50;
+        }
+        
+        /* ===== КИБЕР-ДОЖДЬ ===== */
+        .cyber-rain {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 0;
+            font-family: monospace;
+            font-size: 20px;
+            color: #00d4ff;
+            opacity: 0.25;
+            text-shadow: 0 0 5px #00d4ff, 0 0 15px #7b2fbe;
+        }
+        .cyber-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.4);
+            pointer-events: none;
+            z-index: 1;
+        }
+        .glitch-overlay {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 1;
+            background: repeating-linear-gradient(0deg, rgba(0,212,255,0.02) 0px, rgba(123,47,190,0.02) 2px, transparent 4px, transparent 8px);
+            animation: glitchScan 4s linear infinite;
+        }
+        @keyframes glitchScan {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+        
+        /* ===== ТЕМЫ ===== */
+        body[data-theme="neon"] { --neon: #00ffff; background: radial-gradient(circle at 20% 30%, #0a0f1e, #03060c); }
+        body[data-theme="babydoll"] { --neon: #ffb6c1; background: linear-gradient(135deg, #ffe0f0, #e0f0ff); }
+        body[data-theme="summer"] { --neon: #ffa500; background: linear-gradient(135deg, #c0e0a0, #ffcc80); }
+        body[data-theme="beach"] { --neon: #ffd700; background: linear-gradient(135deg, #b0e0ff, #fff0a0); }
+        body[data-theme="digital"] { --neon: #ff8c00; background: linear-gradient(135deg, #ffaa70, #c080ff); }
+        body[data-theme="creative"] { --neon: #ffb6c1; background: linear-gradient(135deg, #ffc0cb, #a0b080); }
+        body[data-theme="warm"] { --neon: #ffaa77; background: linear-gradient(135deg, #ffd0d0, #ffe0b0); }
+        body[data-theme="cyber"] { --neon: #00d4ff; background: #0a0a0f; position: relative; overflow: hidden; }
+        body[data-theme="wine"] { --neon: #a61b7a; background: radial-gradient(ellipse at 30% 40%, #3a0a1a, #1a050a); }
+        
+        body[data-theme] .chat-app { border-color: var(--neon); box-shadow: 0 0 30px var(--neon); }
+        body[data-theme] .chat-app::before { background: var(--neon); }
+        body[data-theme] .bubble { border-color: var(--neon); box-shadow: 0 0 8px var(--neon); }
+        body[data-theme] .input-area { border-color: var(--neon); }
+        body[data-theme] .controls select, body[data-theme] .controls button { border-color: var(--neon); }
+        body[data-theme] .controls select:hover, body[data-theme] .controls button:hover { background: var(--neon); color: #000; }
+        body[data-theme] .theme-dropdown-content { border-color: var(--neon); }
+        body[data-theme] .avatar { border-color: var(--neon); }
+        
+        /* ===== РЕЖИМЫ ДЛЯ ДАЛЬТОНИКОВ ===== */
+        body.tritanopia { filter: hue-rotate(180deg) saturate(0.6); }
+        body.deuteranopia { filter: grayscale(0.3) contrast(1.1); }
+        
+        /* ===== АДАПТИВНОСТЬ ===== */
+        @media (max-width: 768px) {
+            .controls { gap: 0.4rem; }
+            .controls select, .controls button { padding: 4px 10px; font-size: 0.7rem; }
+            .header { padding: 0.5rem 1rem; }
+            .brand h1 { font-size: 1.1rem; }
+            .chat-window { padding: 0.8rem 1rem; }
+            .msg { max-width: 95%; }
+            .input-area input { max-width: 100%; }
+            #welcomeModal .modal-box { padding: 1.5rem; }
+            #welcomeModal .modal-box h2 { font-size: 1.4rem; }
+            #settingsModal .modal-box { padding: 1.5rem; }
         }
     </style>
 </head>
-<body>
-<div class="chat">
-    <div id="charactersPanel" class="characters-panel">
-        <div class="panel-header">
-            <span>🎭 Персонажи</span>
-        </div>
-        <div id="charactersList"></div>
-    </div>
-    <button id="togglePanelBtn" class="panel-toggle-btn">▶</button>
-    <div class="header">
-        <div class="brand">
-            <div class="neon-icon">🧠✨</div>
-            <div class="brand-text">
-                <h1>NeoBrain</h1>
-                <p>локальная нейросеть</p>
+<body data-theme="neon">
+    <div class="chat-app">
+        <!-- ШАПКА -->
+        <div class="header">
+            <div class="brand">
+                <span style="font-size:2rem; filter: drop-shadow(0 0 15px var(--neon));">🧠</span>
+                <div>
+                    <h1>NeoBrain</h1>
+                    <p>локальная нейросеть</p>
+                </div>
+            </div>
+            <div class="controls">
+                <select id="modelSelect"><option>Загрузка...</option></select>
+                <div class="theme-dropdown">
+                    <button id="themeToggleBtn" class="theme-btn" style="width:auto; padding:6px 16px;">🎨 Темы</button>
+                    <div class="theme-dropdown-content" id="themeDropdown">
+                        <button class="theme-btn" data-theme="neon">🌙</button>
+                        <button class="theme-btn" data-theme="babydoll">🎀</button>
+                        <button class="theme-btn" data-theme="summer">☀️</button>
+                        <button class="theme-btn" data-theme="beach">🏖️</button>
+                        <button class="theme-btn" data-theme="digital">📱</button>
+                        <button class="theme-btn" data-theme="creative">🎨</button>
+                        <button class="theme-btn" data-theme="warm">🔥</button>
+                        <button class="theme-btn" data-theme="cyber">🎮</button>
+                        <button class="theme-btn" data-theme="wine">🍷</button>
+                    </div>
+                </div>
+                <button id="clearBtn">🗑</button>
+                <button id="addCharacterBtn">➕</button>
+                <label style="color: #fff; font-size: 0.8rem; display: flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.3); padding: 4px 12px; border-radius: 20px; border: 1px solid var(--neon); cursor: pointer;">
+                    <input type="checkbox" id="streamToggle" checked style="accent-color: var(--neon); width: 16px; height: 16px; cursor: pointer;">
+                    💨 Поток
+                </label>
+                <button id="settingsBtn">⚙️</button>
             </div>
         </div>
-        <div class="controls">
-            <select id="modelSelect"><option>Загрузка...</option></select>
-            <select id="themeSelect">
-                <option value="cosmos">🌌 Космос</option>
-                <option value="neon">🌙 Неон</option>
-                <option value="babydoll">🎀 Baby-doll</option>
-                <option value="summer">☀️ Летняя</option>
-                <option value="beach">🏖️ Пляжная</option>
-                <option value="digital">📱 Цифровая</option>
-                <option value="creative">🎨 Творческая</option>
-                <option value="warm">🔥 Тёплая</option>
-            </select>
-            <div class="temp-control">
-                <span>🌡️</span>
-                <input type="range" id="temperatureSlider" min="1" max="10" step="1" value="5">
-                <span id="tempValue">5</span>
+        
+        <!-- ЧАТ -->
+        <div class="chat-window" id="chatWindow">
+            <div class="msg ai-msg">
+                <div class="avatar">🤖</div>
+                <div class="bubble">Привет! Я NeoBrain. Напиши что-нибудь 😊</div>
             </div>
-            <button id="clearBtn">🗑 Очистить</button>
-            <button id="reloadModelsBtn" style="background:#f39c12;">🔄 Модели</button>
-            <button id="addCharacterBtn" class="create-char-btn">➕ Создать персонажа</button>
         </div>
-    </div>
-    <div class="chat-window" id="chatWindow">
-        <div class="msg ai-msg">
+        
+        <!-- ИНДИКАТОР ПЕЧАТИ -->
+        <div class="typing-block" id="typingBlock">
             <div class="avatar">🤖</div>
-            <div class="bubble">Привет! Я NeoBrain. Напиши что-нибудь 😊</div>
+            <div class="typing-dots"><span></span><span></span><span></span></div>
+        </div>
+        
+        <!-- ПОЛЕ ВВОДА -->
+        <div class="input-area">
+            <input type="text" id="msgInput" placeholder="Напиши сообщение..." autofocus>
+            <button id="sendBtn">💬</button>
         </div>
     </div>
-    <div class="typing-block" id="typingBlock">
-        <div class="avatar">🤖</div>
-        <div class="typing-dots"><span></span><span></span><span></span></div>
-    </div>
-    <div class="input-area">
-        <input type="text" id="msgInput" placeholder="Напиши сообщение..." autofocus>
-        <button id="sendBtn">💬 Отправить</button>
-    </div>
-</div>
-
-<div id="modal" class="modal">
-    <div class="modal-content">
-        <h3>➕ Новый персонаж</h3>
-        <input type="text" id="modalCharName" placeholder="Имя персонажа">
-        <textarea id="modalCharDesc" rows="3" placeholder="Опишите характер, стиль речи, роль...&#10;Пример: Ты — старый маг, говоришь загадками, любишь шутить."></textarea>
-        <div class="modal-buttons">
-            <button id="modalSaveBtn">Сохранить</button>
-            <button id="modalCancelBtn">Отмена</button>
+    
+    <!-- МОДАЛКА ПЕРСОНАЖА -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3>➕ Новый персонаж</h3>
+            <input type="text" id="modalCharName" placeholder="Имя персонажа">
+            <textarea id="modalCharDesc" rows="3" placeholder="Опиши характер, стиль речи, роль..."></textarea>
+            <div class="modal-buttons">
+                <button id="modalSaveBtn">Сохранить</button>
+                <button id="modalCancelBtn">Отмена</button>
+            </div>
         </div>
     </div>
-</div>
+    
+    <!-- ПРИВЕТСТВИЕ -->
+    <div id="welcomeModal">
+        <div class="modal-box">
+            <h2>👋 Добро пожаловать!</h2>
+            <p>Выберите режим отображения. Если у вас нет нарушений цветовосприятия, просто оставьте как есть.</p>
+            <div class="btn-group">
+                <button class="default-btn" onclick="setAccessibility('default')">✅ Оставить как есть</button>
+                <button onclick="setAccessibility('tritanopia')">👁️ Режим для тританопии</button>
+                <button onclick="setAccessibility('deuteranopia')">👁️ Режим для дейтеранопии</button>
+            </div>
+            <p style="font-size:0.75rem; opacity:0.5; margin-top:1.5rem;">Настройку можно изменить через ⚙️</p>
+        </div>
+    </div>
+    
+    <!-- НАСТРОЙКИ -->
+    <div id="settingsModal">
+        <div class="modal-box">
+            <h2>⚙️ Настройки</h2>
+            <div class="btn-group">
+                <button class="default-btn" onclick="setAccessibility('default')">✅ Обычный режим</button>
+                <button onclick="setAccessibility('tritanopia')">👁️ Тританопия</button>
+                <button onclick="setAccessibility('deuteranopia')">👁️ Дейтеранопия</button>
+            </div>
+            <button class="close-btn" onclick="document.getElementById('settingsModal').style.display='none'">✕ Закрыть</button>
+        </div>
+    </div>
 
-<script>
-    // === ДОМ ЭЛЕМЕНТЫ ===
-    const chatWindow = document.getElementById('chatWindow');
-    const msgInput = document.getElementById('msgInput');
-    const sendBtn = document.getElementById('sendBtn');
-    const clearBtn = document.getElementById('clearBtn');
-    const modelSelect = document.getElementById('modelSelect');
-    const typingBlock = document.getElementById('typingBlock');
-    const temperatureSlider = document.getElementById('temperatureSlider');
-    const tempValue = document.getElementById('tempValue');
-    const themeSelect = document.getElementById('themeSelect');
-    const toggleBtn = document.getElementById('togglePanelBtn');
-    const charactersPanel = document.getElementById('charactersPanel');
-    const charactersList = document.getElementById('charactersList');
-    const addCharacterBtn = document.getElementById('addCharacterBtn');
-    const modal = document.getElementById('modal');
-    const modalCharName = document.getElementById('modalCharName');
-    const modalCharDesc = document.getElementById('modalCharDesc');
-    const modalSaveBtn = document.getElementById('modalSaveBtn');
-    const modalCancelBtn = document.getElementById('modalCancelBtn');
+    <script>
+        // ===== ЭЛЕМЕНТЫ =====
+        const chatWindow = document.getElementById('chatWindow');
+        const msgInput = document.getElementById('msgInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const modelSelect = document.getElementById('modelSelect');
+        const typingBlock = document.getElementById('typingBlock');
+        const addCharacterBtn = document.getElementById('addCharacterBtn');
+        const modal = document.getElementById('modal');
+        const modalCharName = document.getElementById('modalCharName');
+        const modalCharDesc = document.getElementById('modalCharDesc');
+        const modalSaveBtn = document.getElementById('modalSaveBtn');
+        const modalCancelBtn = document.getElementById('modalCancelBtn');
+        const themeToggleBtn = document.getElementById('themeToggleBtn');
+        const themeDropdown = document.getElementById('themeDropdown');
+        const welcomeModal = document.getElementById('welcomeModal');
+        const settingsModal = document.getElementById('settingsModal');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const streamToggle = document.getElementById('streamToggle');
 
-    // === ТЕМПЕРАТУРА ===
-    if (temperatureSlider) {
-        temperatureSlider.addEventListener('input', () => {
-            tempValue.innerText = temperatureSlider.value;
-        });
-    }
-
-    // === МОДЕЛИ ===
-    async function loadModels() {
-    try {
-        const res = await fetch('/models');
-        const data = await res.json();
-        modelSelect.innerHTML = '';
-        if (data.models && data.models.length) {
-            data.models.forEach(m => {
-                if (m === 'phi3:3.8b') return;
-                if (m === 'llama3.2:3b') return;  // ← убираем модель
-                const opt = document.createElement('option');
-                opt.value = m;
-                let name = m;
-                if (m === 'mistral:7b') name = '🧠 Mistral 7b — умная, хорошо держит роль';
-                else if (m === 'qwen2.5-coder:7b') name = '💻 Qwen 7b — кодовая, средняя';
-                else if (m === 'qwen2.5-coder:1.5b') name = '🚀 Qwen 1.5b — очень быстрая';
-                else if (m === 'llama3.1:8b') name = '🧠 Llama 3.1 8b — отличная для ролей';
-                else name = m;
-                opt.textContent = name;
-                modelSelect.appendChild(opt);
-            });
+        // ===== ДОСТУПНОСТЬ =====
+        function setAccessibility(mode) {
+            document.body.classList.remove('tritanopia', 'deuteranopia');
+            if (mode !== 'default') document.body.classList.add(mode);
+            localStorage.setItem('neobrain_accessibility', mode);
+            welcomeModal.style.display = 'none';
+            settingsModal.style.display = 'none';
+            showToast('Режим: ' + (mode === 'default' ? 'Обычный' : mode === 'tritanopia' ? 'Тританопия' : 'Дейтеранопия'));
         }
-    } catch(e) { console.error(e); }
-}
 
-    // === СООБЩЕНИЯ ===
-    function addMessage(text, isUser) {
-        const div = document.createElement('div');
-        div.className = `msg ${isUser ? 'user-msg' : 'ai-msg'}`;
-        div.innerHTML = `<div class="avatar">${isUser ? '👤' : '🤖'}</div><div class="bubble">${escapeHtml(text)}</div>`;
-        chatWindow.appendChild(div);
-        const timeDiv = document.createElement('div');
-        timeDiv.className = 'msg-time';
-        timeDiv.innerText = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        chatWindow.appendChild(timeDiv);
-        chatWindow.scrollTop = chatWindow.scrollHeight;
-    }
-
-    function escapeHtml(str) {
-        return str.replace(/[&<>]/g, m => m === '&' ? '&amp;' : (m === '<' ? '&lt;' : '&gt;'));
-    }
-
-    function clearChat() {
-        if (confirm('Очистить чат?')) {
-            chatWindow.innerHTML = '';
-            addMessage('Чат очищен. Напиши что-нибудь!', false);
+        function showToast(text) {
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+                background: var(--neon, #00ffff); color: #000;
+                padding: 12px 24px; border-radius: 30px; font-weight: bold;
+                z-index: 9999; box-shadow: 0 0 30px var(--neon, #00ffff);
+                transition: all 0.3s;
+            `;
+            toast.innerText = text;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(-50%) translateY(20px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
         }
-    }
 
-    function showTyping() { typingBlock.style.display = 'flex'; }
-    function hideTyping() { typingBlock.style.display = 'none'; }
+        // ===== ЗАГРУЗКА МОДЕЛЕЙ =====
+        async function loadModels() {
+            try {
+                const res = await fetch('/models');
+                const data = await res.json();
+                modelSelect.innerHTML = '';
+                if (data.models && data.models.length) {
+                    data.models.forEach(m => {
+                        if (m === 'phi3:3.8b' || m === 'llama3.2:3b') return;
+                        const opt = document.createElement('option');
+                        opt.value = m;
+                        let name = m;
+                        if (m === 'mistral:7b') name = '🧠 Mistral 7b — Умная';
+                        else if (m === 'qwen2.5-coder:7b') name = '💻 Qwen 7b — Сбалансированная';
+                        else if (m === 'qwen2.5-coder:1.5b') name = '⚡ Qwen 1.5b — Молниеносная';
+                        else if (m === 'llama3.1:8b') name = '🎭 Llama 3.1 8b — Творческая';
+                        else name = m;
+                        opt.textContent = name;
+                        modelSelect.appendChild(opt);
+                    });
+                }
+            } catch(e) { console.error(e); }
+        }
 
-    // === ПЕРСОНАЖИ ===
-    let characters = [];
-    let activeCharacterId = null;
-    const STORAGE_CHARS = 'neobrain_chars';
-    const STORAGE_ACTIVE_CHAR = 'neobrain_active_char';
+        // ===== ТЕМЫ =====
+        function applyTheme(theme) {
+            document.body.setAttribute('data-theme', theme);
+            localStorage.setItem('neobrain_theme', theme);
+            themeDropdown.classList.remove('show');
+            document.querySelectorAll('.theme-btn[data-theme]').forEach(b => b.classList.remove('active'));
+            const activeBtn = document.querySelector(`.theme-btn[data-theme="${theme}"]`);
+            if (activeBtn) activeBtn.classList.add('active');
+            themeToggleBtn.textContent = (activeBtn ? activeBtn.textContent : '🎨') + ' Темы';
+            if (theme === 'cyber') startCyberRain();
+            else stopCyberRain();
+        }
 
-    function saveCharacters() { localStorage.setItem(STORAGE_CHARS, JSON.stringify(characters)); }
-
-    function loadCharacters() {
-        const saved = localStorage.getItem(STORAGE_CHARS);
-        if (saved) characters = JSON.parse(saved);
-        else characters = [{ id: 'default', name: 'Помощник', description: 'Ты дружелюбный и умный ассистент. Отвечай на русском кратко.' }];
-        renderCharactersList();
-        loadActiveCharacter();
-    }
-
-    function renderCharactersList() {
-        if (!charactersList) return;
-        charactersList.innerHTML = '';
-        characters.forEach(c => {
-            const div = document.createElement('div');
-            div.className = `character-item ${activeCharacterId === c.id ? 'active' : ''}`;
-            div.innerHTML = `<span class="character-name">${escapeHtml(c.name)}</span><button class="delete-char" data-id="${c.id}">🗑</button>`;
-            div.querySelector('.character-name').onclick = () => setActiveCharacter(c.id);
-            div.querySelector('.delete-char').onclick = (e) => {
+        document.querySelectorAll('.theme-btn[data-theme]').forEach(btn => {
+            btn.addEventListener('click', function(e) {
                 e.stopPropagation();
-                deleteCharacter(c.id);
-            };
-            charactersList.appendChild(div);
+                applyTheme(this.dataset.theme);
+            });
         });
-    }
 
-    function setActiveCharacter(id) {
-        activeCharacterId = id;
-        localStorage.setItem(STORAGE_ACTIVE_CHAR, id);
-        renderCharactersList();
-    }
+        themeToggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            themeDropdown.classList.toggle('show');
+        });
+        document.addEventListener('click', () => themeDropdown.classList.remove('show'));
 
-    function loadActiveCharacter() {
-        const saved = localStorage.getItem(STORAGE_ACTIVE_CHAR);
-        if (saved && characters.some(c => c.id === saved)) activeCharacterId = saved;
-        else if (characters.length) activeCharacterId = characters[0].id;
-        renderCharactersList();
-    }
+        // ===== КИБЕР-ДОЖДЬ =====
+        let cyberInterval = null, glitchInterval = null;
 
-    function addCharacter(name, desc) {
-        const id = Date.now().toString();
-        characters.push({ id, name, description: desc });
-        saveCharacters();
-        renderCharactersList();
-        setActiveCharacter(id);
-    }
+        function startCyberRain() {
+            if (cyberInterval) return;
+            const container = document.createElement('div');
+            container.className = 'cyber-rain';
+            container.id = 'cyberRain';
+            document.body.appendChild(container);
 
-    function deleteCharacter(id) {
-        if (characters.length === 1) { alert('Нельзя удалить последнего персонажа'); return; }
-        if (confirm('Удалить персонажа?')) {
-            characters = characters.filter(c => c.id !== id);
-            if (activeCharacterId === id) activeCharacterId = characters[0].id;
-            saveCharacters();
-            renderCharactersList();
-            loadActiveCharacter();
+            const overlay = document.createElement('div');
+            overlay.className = 'cyber-overlay';
+            overlay.id = 'cyberOverlay';
+            document.body.appendChild(overlay);
+
+            const glitch = document.createElement('div');
+            glitch.className = 'glitch-overlay';
+            glitch.id = 'glitchOverlay';
+            document.body.appendChild(glitch);
+
+            const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            const cols = Math.floor(window.innerWidth / 18);
+            const drops = [];
+
+            for (let i = 0; i < cols; i++) {
+                const col = document.createElement('div');
+                col.style.position = 'absolute';
+                col.style.top = (-50 - Math.random() * 300) + 'px';
+                col.style.left = i * 18 + 'px';
+                col.style.fontFamily = 'monospace';
+                col.style.fontSize = (16 + Math.random() * 10) + 'px';
+                col.style.color = Math.random() > 0.6 ? '#7b2fbe' : '#00d4ff';
+                col.style.opacity = 0.1 + Math.random() * 0.3;
+                col.style.textShadow = `0 0 8px ${col.style.color}`;
+                const len = 5 + Math.floor(Math.random() * 15);
+                let txt = '';
+                for (let j = 0; j < len; j++) txt += chars[Math.floor(Math.random() * chars.length)] + '\\n';
+                col.textContent = txt;
+                container.appendChild(col);
+                drops.push({ el: col, speed: 0.5 + Math.random() * 3 });
+            }
+
+            cyberInterval = setInterval(() => {
+                for (const d of drops) {
+                    let top = parseFloat(d.el.style.top);
+                    top += d.speed;
+                    if (top > window.innerHeight + 200) {
+                        top = -50 - Math.random() * 300;
+                        d.el.style.color = Math.random() > 0.6 ? '#7b2fbe' : '#00d4ff';
+                        d.el.style.textShadow = `0 0 8px ${d.el.style.color}`;
+                        const newLen = 5 + Math.floor(Math.random() * 15);
+                        let txt = '';
+                        for (let j = 0; j < newLen; j++) txt += chars[Math.floor(Math.random() * chars.length)] + '\\n';
+                        d.el.textContent = txt;
+                        d.el.style.opacity = 0.1 + Math.random() * 0.3;
+                    }
+                    d.el.style.top = top + 'px';
+                }
+            }, 70);
+
+            glitchInterval = setInterval(() => {
+                const el = document.getElementById('glitchOverlay');
+                if (el) {
+                    const r1 = 0.02 + Math.random() * 0.05;
+                    const r2 = 0.02 + Math.random() * 0.05;
+                    const r3 = 8 + Math.random() * 25;
+                    el.style.background = `repeating-linear-gradient(0deg, rgba(0,212,255,${r1}) 0px, rgba(123,47,190,${r2}) 2px, transparent 4px, transparent ${r3}px)`;
+                    setTimeout(() => {
+                        el.style.background = 'repeating-linear-gradient(0deg, rgba(0,212,255,0.02) 0px, rgba(123,47,190,0.02) 2px, transparent 4px, transparent 8px)';
+                    }, 200);
+                }
+            }, 4000 + Math.random() * 6000);
         }
-    }
 
-    // === МОДАЛЬНОЕ ОКНО ===
-    if (addCharacterBtn) {
-        addCharacterBtn.onclick = () => {
+        function stopCyberRain() {
+            if (cyberInterval) { clearInterval(cyberInterval); cyberInterval = null; }
+            if (glitchInterval) { clearInterval(glitchInterval); glitchInterval = null; }
+            document.getElementById('cyberRain')?.remove();
+            document.getElementById('cyberOverlay')?.remove();
+            document.getElementById('glitchOverlay')?.remove();
+        }
+
+        // ===== ВОССТАНОВЛЕНИЕ НАСТРОЕК =====
+        const savedTheme = localStorage.getItem('neobrain_theme') || 'neon';
+        applyTheme(savedTheme);
+
+        const savedAccess = localStorage.getItem('neobrain_accessibility');
+        if (savedAccess) {
+            welcomeModal.style.display = 'none';
+            setAccessibility(savedAccess);
+        }
+
+        // ===== СООБЩЕНИЯ =====
+        function addMessage(text, isUser) {
+            const div = document.createElement('div');
+            div.className = 'msg ' + (isUser ? 'user-msg' : 'ai-msg');
+            div.innerHTML = `
+                <div class="avatar">${isUser ? '👤' : '🤖'}</div>
+                <div class="bubble">${text}</div>
+            `;
+            chatWindow.appendChild(div);
+            const time = document.createElement('div');
+            time.className = 'msg-time';
+            time.innerText = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            chatWindow.appendChild(time);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        function clearChat() {
+            if (confirm('Очистить чат?')) {
+                chatWindow.innerHTML = '';
+                addMessage('Чат очищен. Напиши что-нибудь!', false);
+            }
+        }
+
+        function showTyping() { typingBlock.style.display = 'flex'; }
+        function hideTyping() { typingBlock.style.display = 'none'; }
+
+        // ===== ПЕРСОНАЖИ =====
+        let characters = [];
+        let activeCharacterId = null;
+        const STORAGE_CHARS = 'neobrain_chars';
+        const STORAGE_ACTIVE = 'neobrain_active_char';
+
+        function loadCharacters() {
+            const saved = localStorage.getItem(STORAGE_CHARS);
+            characters = saved ? JSON.parse(saved) : [{ id: 'default', name: 'Помощник', description: 'Ты дружелюбный и умный ассистент. Отвечай на русском кратко.' }];
+            const active = localStorage.getItem(STORAGE_ACTIVE);
+            activeCharacterId = active && characters.some(c => c.id === active) ? active : characters[0].id;
+        }
+
+        function saveCharacters() {
+            localStorage.setItem(STORAGE_CHARS, JSON.stringify(characters));
+            localStorage.setItem(STORAGE_ACTIVE, activeCharacterId);
+        }
+
+        function addCharacter(name, desc) {
+            const id = Date.now().toString();
+            characters.push({ id, name, description: desc });
+            activeCharacterId = id;
+            saveCharacters();
+        }
+
+        loadCharacters();
+
+        // ===== ОТПРАВКА СООБЩЕНИЙ =====
+        async function sendMessage() {
+            const streamEnabled = streamToggle.checked;
+            if (streamEnabled) {
+                await sendMessageStream();
+            } else {
+                await sendMessageNormal();
+            }
+        }
+
+        async function sendMessageNormal() {
+            const text = msgInput.value.trim();
+            if (!text) return;
+            const model = modelSelect.value;
+            if (!model || model === 'Загрузка...') {
+                addMessage('Сначала выберите модель', false);
+                return;
+            }
+            addMessage(text, true);
+            msgInput.value = '';
+            showTyping();
+
+            const aiDiv = document.createElement('div');
+            aiDiv.className = 'msg ai-msg';
+            aiDiv.innerHTML = '<div class="avatar">🤖</div><div class="bubble"></div>';
+            const bubble = aiDiv.querySelector('.bubble');
+            chatWindow.appendChild(aiDiv);
+
+            try {
+                const selectedChar = characters.find(c => c.id === activeCharacterId);
+                const charDesc = selectedChar ? selectedChar.description : 'Ты полезный ассистент. Отвечай на русском кратко.';
+                const response = await fetch('/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: text,
+                        model: model,
+                        temperature: 0.7,
+                        character_description: charDesc,
+                        history: []
+                    })
+                });
+                let answer = await response.text();
+                bubble.innerText = answer;
+                const time = document.createElement('div');
+                time.className = 'msg-time';
+                time.innerText = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                chatWindow.appendChild(time);
+                chatWindow.scrollTop = chatWindow.scrollHeight;
+            } catch(err) {
+                bubble.innerText = 'Ошибка: ' + err.message;
+            } finally {
+                hideTyping();
+            }
+        }
+
+        async function sendMessageStream() {
+            const text = msgInput.value.trim();
+            if (!text) return;
+            const model = modelSelect.value;
+            if (!model || model === 'Загрузка...') {
+                addMessage('Сначала выберите модель', false);
+                return;
+            }
+            
+            addMessage(text, true);
+            msgInput.value = '';
+            showTyping();
+
+            const aiDiv = document.createElement('div');
+            aiDiv.className = 'msg ai-msg';
+            aiDiv.innerHTML = '<div class="avatar">🤖</div><div class="bubble"></div>';
+            const bubble = aiDiv.querySelector('.bubble');
+            chatWindow.appendChild(aiDiv);
+            
+            try {
+                const selectedChar = characters.find(c => c.id === activeCharacterId);
+                const charDesc = selectedChar ? selectedChar.description : 'Ты полезный ассистент. Отвечай на русском кратко.';
+                
+                const response = await fetch('/ask-stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: text,
+                        model: model,
+                        temperature: 0.7,
+                        character_description: charDesc
+                    })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullText = '';
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    fullText += chunk;
+                    bubble.textContent = fullText;
+                    chatWindow.scrollTop = chatWindow.scrollHeight;
+                }
+
+                const time = document.createElement('div');
+                time.className = 'msg-time';
+                time.innerText = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                chatWindow.appendChild(time);
+            } catch(err) {
+                bubble.innerText = 'Ошибка: ' + err.message;
+            } finally {
+                hideTyping();
+            }
+        }
+
+        // ===== СОБЫТИЯ =====
+        sendBtn.addEventListener('click', sendMessage);
+        msgInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+        clearBtn.addEventListener('click', clearChat);
+        settingsBtn.addEventListener('click', () => { settingsModal.style.display = 'flex'; });
+
+        addCharacterBtn.addEventListener('click', () => {
             modalCharName.value = '';
             modalCharDesc.value = '';
             modal.style.display = 'flex';
-        };
-    }
-    if (modalSaveBtn) {
-        modalSaveBtn.onclick = () => {
+        });
+
+        modalSaveBtn.addEventListener('click', () => {
             const name = modalCharName.value.trim();
             const desc = modalCharDesc.value.trim();
             if (name && desc) {
                 addCharacter(name, desc);
                 modal.style.display = 'none';
+                showToast('✅ Персонаж "' + name + '" создан!');
             } else {
-                alert('Заполните имя и описание персонажа');
+                showToast('❌ Заполните имя и описание');
             }
-        };
-    }
-    if (modalCancelBtn) {
-        modalCancelBtn.onclick = () => modal.style.display = 'none';
-    }
-    window.onclick = (e) => {
-        if (e.target === modal) modal.style.display = 'none';
-    };
-
-    // === КНОПКА ПАНЕЛИ ===
-    if (toggleBtn && charactersPanel) {
-        toggleBtn.onclick = () => {
-            charactersPanel.classList.toggle('open');
-            toggleBtn.innerText = charactersPanel.classList.contains('open') ? '◀' : '▶';
-        };
-    }
-
-    // === ОТПРАВКА СООБЩЕНИЯ ===
-    async function sendMessage() {
-        const text = msgInput.value.trim();
-        if (!text) return;
-        const model = modelSelect.value;
-        if (!model || model === 'Нет моделей') {
-            addMessage('Сначала выберите модель', false);
-            return;
-        }
-        addMessage(text, true);
-        msgInput.value = '';
-        showTyping();
-
-        const aiDiv = document.createElement('div');
-        aiDiv.className = 'msg ai-msg';
-        aiDiv.innerHTML = `<div class="avatar">🤖</div><div class="bubble"></div>`;
-        const bubble = aiDiv.querySelector('.bubble');
-        chatWindow.appendChild(aiDiv);
-
-        try {
-            let tempRaw = temperatureSlider ? parseFloat(temperatureSlider.value) : 5;
-            const temperature = 0.1 + (tempRaw - 1) * 0.211;
-            const selectedChar = characters.find(c => c.id === activeCharacterId);
-            const charDesc = selectedChar ? selectedChar.description : 'Ты полезный ассистент. Отвечай на русском кратко.';
-            
-            const response = await fetch('/ask', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt: text,
-                    model: model,
-                    temperature: temperature,
-                    character_description: charDesc,
-                    history: []
-                })
-            });
-            
-            let answer = await response.text();
-            answer = answer.trim();
-            if (answer.startsWith('"') && answer.endsWith('"')) answer = answer.slice(1, -1);
-            if (answer.startsWith("'") && answer.endsWith("'")) answer = answer.slice(1, -1);
-            bubble.innerHTML = answer.replace(/\\n/g, '<br>');
-            
-            const copyBtn = document.createElement('button');
-            copyBtn.innerText = '📋 Копировать';
-            copyBtn.style.cssText = 'background:#2e7d32; border:none; border-radius:20px; padding:4px 12px; font-size:0.7rem; color:white; cursor:pointer; margin-top:6px; display:block;';
-            copyBtn.onclick = () => { navigator.clipboard.writeText(answer); alert('✅ Ответ скопирован!'); };
-            bubble.appendChild(copyBtn);
-            
-            const timeDiv = document.createElement('div');
-            timeDiv.className = 'msg-time';
-            timeDiv.innerText = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            chatWindow.appendChild(timeDiv);
-        } catch(err) {
-            bubble.innerText = 'Ошибка: ' + err.message;
-        } finally {
-            hideTyping();
-        }
-    }
-
-    // === ТЕМЫ ===
-    if (themeSelect) {
-        const savedTheme = localStorage.getItem('neobrain_theme');
-        if (savedTheme) {
-            document.body.className = savedTheme;
-            themeSelect.value = savedTheme;
-        }
-        themeSelect.addEventListener('change', (e) => {
-            document.body.className = e.target.value;
-            localStorage.setItem('neobrain_theme', e.target.value);
         });
-    }
 
-    // === ЗАПУСК ===
-    loadCharacters();
+        modalCancelBtn.addEventListener('click', () => modal.style.display = 'none');
+        window.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
 
-    // Надёжная загрузка моделей
-    function safeLoadModels() {
-        if (typeof loadModels === 'function') {
-            loadModels();
-            console.log('✅ Модели загружены');
-        } else {
-            console.log('❌ loadModels не найдена, повтор через 0.5с');
-            setTimeout(safeLoadModels, 500);
-        }
-    }
-
-    // Ждём полной загрузки страницы
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', safeLoadModels);
-    } else {
-        safeLoadModels();
-    }
-
-    sendBtn.onclick = sendMessage;
-    clearBtn.onclick = clearChat;
-    msgInput.onkeypress = (e) => { if (e.key === 'Enter') sendMessage(); };
-
-    // Кнопка ручной загрузки моделей
-    const reloadModelsBtn = document.getElementById('reloadModelsBtn');
-    if (reloadModelsBtn) {
-        reloadModelsBtn.onclick = () => {
-            loadModels();
-            console.log('🔄 Модели загружены вручную');
-        };
-    }
-</script>
+        // ===== ЗАПУСК =====
+        loadModels();
+    </script>
 </body>
 </html>"""
 
@@ -745,6 +1086,41 @@ async def ask(request: dict):
             answer = answer[1:-1]
         answer = answer.replace('\\"', '"').replace("\\'", "'")
         return answer
+    except Exception as e:
+        return f"Ошибка: {e}"
+
+@app.post("/ask-stream")
+async def ask_stream(request: dict):
+    try:
+        prompt = request.get("prompt")
+        model = request.get("model")
+        temperature = request.get("temperature", 0.7)
+        character_description = request.get("character_description", "Ты полезный ассистент. Отвечай на русском кратко.")
+        
+        full_prompt = f"{character_description}\n\nСледуй своему описанию. Отвечай от первого лица, как этот персонаж.\n\nПользователь: {prompt}\nАссистент:"
+        
+        r = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": model,
+                "prompt": full_prompt,
+                "stream": True,
+                "temperature": temperature
+            },
+            stream=True
+        )
+        
+        def generate():
+            for line in r.iter_lines():
+                if line:
+                    try:
+                        data = json.loads(line)
+                        chunk = data.get("response", "")
+                        yield chunk
+                    except:
+                        pass
+        
+        return StreamingResponse(generate(), media_type="text/plain")
     except Exception as e:
         return f"Ошибка: {e}"
 
