@@ -1,21 +1,55 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
+import io
 import json
 import requests
 import socket
-import webbrowser
-import threading
 import time
+import threading
+import webbrowser
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
+import uvicorn
+
+# ============================================================
+# ОТКЛЮЧАЕМ ВЫВОД В КОНСОЛЬ (чтобы избежать ошибок кодировки)
+# ============================================================
+if sys.platform == "win32":
+    try:
+        os.system("chcp 65001 > nul")
+    except:
+        pass
+    try:
+        if sys.stdout is not None:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='ignore')
+    except:
+        sys.stdout = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, 'w')
 
 app = FastAPI()
+
+# ============================================================
+# ФАЙЛЫ ДЛЯ ХРАНЕНИЯ
+# ============================================================
+HISTORY_FILE = "history.json"
+CONFIG_FILE = "neobrain_config.json"
+
+def load_history():
+    try:
+        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return []
+
+def save_history(history):
+    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
 
 # ============================================================
 # ПРОВЕРКА OLLAMA
 # ============================================================
 def check_ollama():
-    """Проверяет, запущена ли Ollama"""
     try:
         requests.get("http://localhost:11434/api/tags", timeout=3)
         return True
@@ -23,22 +57,30 @@ def check_ollama():
         return False
 
 # ============================================================
+# ПОЛУЧЕНИЕ ЛОКАЛЬНОГО IP
+# ============================================================
+def get_local_ip():
+    try:
+        hostname = socket.gethostname()
+        return socket.gethostbyname(hostname)
+    except:
+        return "127.0.0.1"
+
+LOCAL_IP = get_local_ip()
+
+# ============================================================
 # НАСТРОЙКИ
 # ============================================================
-CONFIG_FILE = "neobrain_config.json"
-
 def load_config():
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
             return json.load(f)
     except:
         return {
-            "api_keys": {
-                "openai": "",
-                "gemini": "",
-                "claude": ""
-            },
-            "default_provider": "ollama"
+            "api_keys": {"openai": "", "gemini": "", "claude": ""},
+            "default_provider": "ollama",
+            "server_name": "NeoBrain Server",
+            "access_code": ""
         }
 
 def save_config(config):
@@ -54,9 +96,9 @@ def ask_ollama(prompt, model):
     try:
         check = requests.get("http://localhost:11434/api/tags", timeout=3)
         if check.status_code != 200:
-            return {"error": "Ollama не отвечает. Запустите 'ollama serve'"}
+            return {"error": "Ollama не отвечает"}
     except:
-        return {"error": "Ollama не запущена. Запустите 'ollama serve'"}
+        return {"error": "Ollama не запущена"}
 
     response = requests.post(
         "http://localhost:11434/api/generate",
@@ -71,13 +113,13 @@ def ask_ollama(prompt, model):
 
     if response.status_code == 200:
         result = response.json()
-        return {"response": result.get("response", "⚠️ Нет ответа от модели")}
+        return {"response": result.get("response", "Нет ответа")}
     else:
         return {"error": f"Ошибка Ollama: {response.status_code}"}
 
 def ask_openai(prompt, api_key, model="gpt-3.5-turbo"):
     if not api_key:
-        return {"error": "❌ API ключ OpenAI не указан"}
+        return {"error": "API ключ OpenAI не указан"}
     
     try:
         response = requests.post(
@@ -98,13 +140,13 @@ def ask_openai(prompt, api_key, model="gpt-3.5-turbo"):
             result = response.json()
             return {"response": result["choices"][0]["message"]["content"]}
         else:
-            return {"error": f"Ошибка OpenAI: {response.status_code} - {response.text}"}
+            return {"error": f"Ошибка OpenAI: {response.status_code}"}
     except Exception as e:
         return {"error": f"Ошибка OpenAI: {str(e)}"}
 
 def ask_gemini(prompt, api_key, model="gemini-pro"):
     if not api_key:
-        return {"error": "❌ API ключ Google Gemini не указан"}
+        return {"error": "API ключ Google Gemini не указан"}
     
     try:
         response = requests.post(
@@ -119,13 +161,13 @@ def ask_gemini(prompt, api_key, model="gemini-pro"):
             result = response.json()
             return {"response": result["candidates"][0]["content"]["parts"][0]["text"]}
         else:
-            return {"error": f"Ошибка Gemini: {response.status_code} - {response.text}"}
+            return {"error": f"Ошибка Gemini: {response.status_code}"}
     except Exception as e:
         return {"error": f"Ошибка Gemini: {str(e)}"}
 
 def ask_claude(prompt, api_key, model="claude-3-haiku-20240307"):
     if not api_key:
-        return {"error": "❌ API ключ Anthropic Claude не указан"}
+        return {"error": "API ключ Anthropic Claude не указан"}
     
     try:
         response = requests.post(
@@ -147,12 +189,12 @@ def ask_claude(prompt, api_key, model="claude-3-haiku-20240307"):
             result = response.json()
             return {"response": result["content"][0]["text"]}
         else:
-            return {"error": f"Ошибка Claude: {response.status_code} - {response.text}"}
+            return {"error": f"Ошибка Claude: {response.status_code}"}
     except Exception as e:
         return {"error": f"Ошибка Claude: {str(e)}"}
 
 # ============================================================
-# HTML ТЕМПЛЕЙТ (полный код из твоего файла)
+# HTML ТЕМПЛЕЙТ
 # ============================================================
 html_template = """
 <!DOCTYPE html>
@@ -162,9 +204,6 @@ html_template = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NeoBrain</title>
     <style>
-        /* ============================================================
-           БАЗА
-           ============================================================ */
         * {
             margin: 0;
             padding: 0;
@@ -188,39 +227,6 @@ html_template = """
             z-index: 2;
         }
 
-        /* ============================================================
-           ОВЕРЛЕЙ
-           ============================================================ */
-        #fadeOverlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: #000;
-            z-index: 9999;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        #fadeOverlay.active {
-            opacity: 0.5;
-        }
-
-        /* ============================================================
-           ВСЕ ЭЛЕМЕНТЫ
-           ============================================================ */
-        .header, .header h1, .header-actions, .btn, select, input,
-        #panel, .panel-section, .panel-row, #charList, .char-item,
-        .ai-section, .ai-controls, #aiOutput, #status,
-        .panel-section-title, .badge, .label {
-            transition: all 1.5s cubic-bezier(0.4, 0, 0.2, 1);
-        }
-
-        /* ============================================================
-           ШАПКА
-           ============================================================ */
         .header {
             display: flex;
             align-items: center;
@@ -228,9 +234,8 @@ html_template = """
             flex-wrap: wrap;
             gap: 12px;
             padding: 16px 0 20px 0;
-            border-bottom: 2px solid rgba(255, 255, 255, 0.06);
+            border-bottom: 2px solid rgba(0, 212, 255, 0.15);
             margin-bottom: 24px;
-            border-radius: 0 0 4px 4px;
         }
 
         .header h1 {
@@ -240,10 +245,9 @@ html_template = """
             align-items: center;
             gap: 12px;
             letter-spacing: -0.5px;
-        }
-
-        .header h1 span.icon {
-            font-size: 28px;
+            background: linear-gradient(135deg, #00d4ff, #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
 
         .header-actions {
@@ -252,9 +256,6 @@ html_template = """
             flex-wrap: wrap;
         }
 
-        /* ============================================================
-           КНОПКИ
-           ============================================================ */
         .btn {
             padding: 8px 20px;
             border: none;
@@ -265,11 +266,7 @@ html_template = """
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            transition: all 0.3s ease, 
-                        background 1.5s cubic-bezier(0.4, 0, 0.2, 1),
-                        color 1.5s cubic-bezier(0.4, 0, 0.2, 1),
-                        border-color 1.5s cubic-bezier(0.4, 0, 0.2, 1),
-                        box-shadow 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+            transition: all 0.3s ease;
             backdrop-filter: blur(4px);
         }
 
@@ -279,48 +276,34 @@ html_template = """
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
         }
 
-        .btn:active {
-            transform: translateY(0px) scale(0.97);
-        }
-
         .btn-primary {
             background: #00d4ff;
-            color: #000;
+            color: #0a0e1a;
         }
 
         .btn-primary:hover {
-            filter: brightness(0.9);
+            background: #33ddff;
             box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
         }
 
-        .btn-danger {
-            background: #ff6b6b;
-            color: #000;
+        .btn-ghost {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            color: #d4e8ff;
         }
 
-        .btn-danger:hover {
-            background: #ff5555;
-            box-shadow: 0 4px 20px rgba(255, 107, 107, 0.25);
+        .btn-ghost:hover {
+            background: rgba(255, 255, 255, 0.08);
         }
 
         .btn-success {
             background: #51cf66;
-            color: #000;
+            color: #0a0e1a;
         }
 
-        .btn-success:hover {
-            background: #40c057;
-            box-shadow: 0 4px 20px rgba(81, 207, 102, 0.25);
-        }
-
-        .btn-warning {
-            background: #fcc419;
-            color: #000;
-        }
-
-        .btn-warning:hover {
-            background: #fab005;
-            box-shadow: 0 4px 20px rgba(252, 196, 25, 0.25);
+        .btn-danger {
+            background: #ff6b6b;
+            color: #0a0e1a;
         }
 
         .btn-sm {
@@ -329,18 +312,6 @@ html_template = """
             border-radius: 10px;
         }
 
-        .btn-ghost {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-        }
-
-        .btn-ghost:hover {
-            background: rgba(255, 255, 255, 0.08);
-        }
-
-        /* ============================================================
-           ПАНЕЛЬ
-           ============================================================ */
         #panel {
             display: none;
             padding: 24px;
@@ -348,7 +319,7 @@ html_template = """
             border-radius: 16px;
             border: 1px solid rgba(255, 255, 255, 0.06);
             backdrop-filter: blur(8px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            background: rgba(0, 212, 255, 0.02);
         }
 
         .panel-grid {
@@ -387,55 +358,29 @@ html_template = """
             gap: 10px;
         }
 
-        .panel-row select {
+        .panel-row select, .panel-row input {
             flex: 1;
             min-width: 120px;
-        }
-
-        .panel-row input[type="password"],
-        .panel-row input[type="text"] {
-            flex: 1;
-            min-width: 150px;
-        }
-
-        /* ============================================================
-           ПОЛЯ ВВОДА
-           ============================================================ */
-        select,
-        input[type="text"],
-        input[type="password"] {
             padding: 10px 16px;
             border-radius: 12px;
             border: 1px solid rgba(255, 255, 255, 0.08);
             font-size: 14px;
-            font-family: inherit;
-            outline: none;
-            transition: all 0.3s ease,
-                        background 1.5s cubic-bezier(0.4, 0, 0.2, 1),
-                        color 1.5s cubic-bezier(0.4, 0, 0.2, 1),
-                        border-color 1.5s cubic-bezier(0.4, 0, 0.2, 1),
-                        box-shadow 0.3s ease;
-            backdrop-filter: blur(4px);
             background: rgba(255, 255, 255, 0.04);
             color: #d4e8ff;
+            outline: none;
+            transition: all 0.3s ease;
         }
 
-        select:focus,
-        input[type="text"]:focus,
-        input[type="password"]:focus {
+        .panel-row select:focus, .panel-row input:focus {
             border-color: #00d4ff;
             box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.08);
-            transform: scale(1.01);
         }
 
-        select option {
+        .panel-row select option {
             background: #1a1a2e;
             color: #eef5ff;
         }
 
-        /* ============================================================
-           СПИСОК ПЕРСОНАЖЕЙ
-           ============================================================ */
         #charList {
             display: flex;
             flex-direction: column;
@@ -449,12 +394,10 @@ html_template = """
         #charList::-webkit-scrollbar {
             width: 4px;
         }
-
         #charList::-webkit-scrollbar-track {
             background: rgba(255, 255, 255, 0.02);
             border-radius: 10px;
         }
-
         #charList::-webkit-scrollbar-thumb {
             background: rgba(255, 255, 255, 0.12);
             border-radius: 10px;
@@ -482,37 +425,41 @@ html_template = """
             gap: 8px;
         }
 
-        .char-name .emoji {
-            font-size: 16px;
+        .char-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .char-actions button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 4px 8px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            opacity: 0.5;
+        }
+
+        .char-actions button:hover {
+            opacity: 1;
+            background: rgba(255, 255, 255, 0.06);
         }
 
         .char-delete {
-            background: none;
-            border: none;
             color: #ff6b6b;
-            cursor: pointer;
-            font-size: 15px;
-            padding: 4px 8px;
-            border-radius: 8px;
-            opacity: 0.4;
-            transition: all 0.3s ease;
         }
 
-        .char-delete:hover {
-            opacity: 1;
-            background: rgba(255, 107, 107, 0.1);
-            transform: scale(1.1);
+        .char-share {
+            color: #00d4ff;
         }
 
-        /* ============================================================
-           AI СЕКЦИЯ
-           ============================================================ */
         .ai-section {
             padding: 24px;
             border-radius: 16px;
             border: 1px solid rgba(255, 255, 255, 0.06);
             backdrop-filter: blur(8px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.05);
+            background: rgba(255, 255, 255, 0.02);
         }
 
         .ai-section h3 {
@@ -522,6 +469,7 @@ html_template = """
             display: flex;
             align-items: center;
             gap: 10px;
+            color: #e0f0ff;
         }
 
         .ai-controls {
@@ -558,33 +506,73 @@ html_template = """
         .ai-input-group input {
             flex: 1;
             min-width: 180px;
+            padding: 10px 16px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 14px;
+            background: rgba(255, 255, 255, 0.04);
+            color: #d4e8ff;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .ai-input-group input:focus {
+            border-color: #00d4ff;
+            box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.08);
         }
 
         .ai-input-group input::placeholder {
             opacity: 0.4;
         }
 
-        #aiOutput {
+        #chatContainer {
             margin-top: 16px;
-            padding: 16px 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 12px;
             border-radius: 12px;
-            min-height: 64px;
-            border-left: 4px solid #00d4ff;
-            font-size: 14px;
-            white-space: pre-wrap;
-            word-break: break-word;
             background: rgba(255, 255, 255, 0.02);
-            transition: all 0.5s ease;
         }
 
-        #aiOutput:empty::before {
-            content: "Здесь будет ответ AI...";
-            opacity: 0.3;
+        #chatContainer::-webkit-scrollbar {
+            width: 4px;
+        }
+        #chatContainer::-webkit-scrollbar-thumb {
+            background: rgba(0, 212, 255, 0.3);
+            border-radius: 10px;
         }
 
-        /* ============================================================
-           СТАТУС
-           ============================================================ */
+        .chat-message {
+            padding: 10px 16px;
+            margin-bottom: 8px;
+            border-radius: 12px;
+            max-width: 85%;
+            word-break: break-word;
+        }
+
+        .chat-message.user {
+            background: rgba(0, 212, 255, 0.08);
+            border: 1px solid rgba(0, 212, 255, 0.1);
+            margin-left: auto;
+            text-align: right;
+        }
+
+        .chat-message.ai {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            margin-right: auto;
+        }
+
+        .chat-message .role {
+            font-size: 12px;
+            opacity: 0.5;
+            margin-bottom: 4px;
+        }
+
+        #aiOutput {
+            display: none;
+        }
+
         #status {
             margin-top: 16px;
             font-size: 13px;
@@ -594,179 +582,206 @@ html_template = """
             letter-spacing: 0.3px;
         }
 
-        /* ============================================================
-           ================ ЯРКИЕ ТЕМЫ ================
-           ============================================================ */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(12px);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: #111827;
+            border: 1px solid rgba(0, 212, 255, 0.15);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            animation: modalIn 0.4s ease;
+        }
+
+        @keyframes modalIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal h2 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #e0f0ff;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #00d4ff, #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .modal p {
+            color: #88bbdd;
+            margin-bottom: 16px;
+        }
+
+        .modal .share-link {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+            color: #00d4ff;
+            word-break: break-all;
+            margin-bottom: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal .share-link button {
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            border-radius: 8px;
+            color: #00d4ff;
+            padding: 6px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.3s ease;
+        }
+
+        .modal .share-link button:hover {
+            background: rgba(0, 212, 255, 0.2);
+        }
+
+        .modal .btn-close-modal {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.04);
+            color: #88bbdd;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .modal .btn-close-modal:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
         body.theme-neon { background: #0a0e1a; color: #d4e8ff; }
         body.theme-neon .btn-primary { background: #00d4ff; color: #0a0e1a; }
         body.theme-neon select:focus, body.theme-neon input:focus { border-color: #00d4ff; box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.15); }
-        body.theme-neon #aiOutput { border-left-color: #00d4ff; }
         body.theme-neon #panel { background: rgba(0, 212, 255, 0.04); border-color: rgba(0, 212, 255, 0.08); }
         body.theme-neon .ai-section { background: rgba(0, 212, 255, 0.02); border-color: rgba(0, 212, 255, 0.06); }
         body.theme-neon .header { border-bottom-color: rgba(0, 212, 255, 0.08); }
-        body.theme-neon .char-item { background: rgba(0, 212, 255, 0.03); }
-        body.theme-neon .char-item:hover { background: rgba(0, 212, 255, 0.07); }
-        body.theme-neon select, body.theme-neon input { background: rgba(255, 255, 255, 0.04); color: #d4e8ff; border-color: rgba(255, 255, 255, 0.08); }
-        body.theme-neon select option { background: #0a0e1a; color: #d4e8ff; }
-        body.theme-neon .ai-controls { background: rgba(0, 212, 255, 0.03); }
 
         body.theme-cyber { background: #0d0a1a; color: #ff66ff; }
         body.theme-cyber .btn-primary { background: #ff44ff; color: #0d0a1a; }
         body.theme-cyber select:focus, body.theme-cyber input:focus { border-color: #ff44ff; box-shadow: 0 0 0 4px rgba(255, 68, 255, 0.15); }
-        body.theme-cyber #aiOutput { border-left-color: #ff44ff; }
         body.theme-cyber #panel { background: rgba(255, 68, 255, 0.04); border-color: rgba(255, 68, 255, 0.08); }
         body.theme-cyber .ai-section { background: rgba(255, 68, 255, 0.02); border-color: rgba(255, 68, 255, 0.06); }
         body.theme-cyber .header { border-bottom-color: rgba(255, 68, 255, 0.08); }
-        body.theme-cyber select, body.theme-cyber input { background: rgba(255, 68, 255, 0.04); color: #ff66ff; border-color: rgba(255, 68, 255, 0.08); }
-        body.theme-cyber select option { background: #0d0a1a; color: #ff66ff; }
-        body.theme-cyber .ai-controls { background: rgba(255, 68, 255, 0.03); }
 
         body.theme-matrix { background: #0a0f0a; color: #66ff66; }
         body.theme-matrix .btn-primary { background: #44ff44; color: #0a0f0a; }
         body.theme-matrix select:focus, body.theme-matrix input:focus { border-color: #44ff44; box-shadow: 0 0 0 4px rgba(68, 255, 68, 0.15); }
-        body.theme-matrix #aiOutput { border-left-color: #44ff44; }
         body.theme-matrix #panel { background: rgba(68, 255, 68, 0.04); border-color: rgba(68, 255, 68, 0.08); }
         body.theme-matrix .ai-section { background: rgba(68, 255, 68, 0.02); border-color: rgba(68, 255, 68, 0.06); }
         body.theme-matrix .header { border-bottom-color: rgba(68, 255, 68, 0.08); }
-        body.theme-matrix select, body.theme-matrix input { background: rgba(68, 255, 68, 0.04); color: #66ff66; border-color: rgba(68, 255, 68, 0.08); }
-        body.theme-matrix select option { background: #0a0f0a; color: #66ff66; }
-        body.theme-matrix .ai-controls { background: rgba(68, 255, 68, 0.03); }
 
         body.theme-ocean { background: #0a1a2a; color: #66ddff; }
         body.theme-ocean .btn-primary { background: #44ccff; color: #0a1a2a; }
         body.theme-ocean select:focus, body.theme-ocean input:focus { border-color: #44ccff; box-shadow: 0 0 0 4px rgba(68, 204, 255, 0.15); }
-        body.theme-ocean #aiOutput { border-left-color: #44ccff; }
         body.theme-ocean #panel { background: rgba(68, 204, 255, 0.04); border-color: rgba(68, 204, 255, 0.08); }
         body.theme-ocean .ai-section { background: rgba(68, 204, 255, 0.02); border-color: rgba(68, 204, 255, 0.06); }
         body.theme-ocean .header { border-bottom-color: rgba(68, 204, 255, 0.08); }
-        body.theme-ocean select, body.theme-ocean input { background: rgba(68, 204, 255, 0.04); color: #66ddff; border-color: rgba(68, 204, 255, 0.08); }
-        body.theme-ocean select option { background: #0a1a2a; color: #66ddff; }
-        body.theme-ocean .ai-controls { background: rgba(68, 204, 255, 0.03); }
 
         body.theme-sunset { background: #1a0a0a; color: #ffaa88; }
         body.theme-sunset .btn-primary { background: #ff7744; color: #1a0a0a; }
         body.theme-sunset select:focus, body.theme-sunset input:focus { border-color: #ff7744; box-shadow: 0 0 0 4px rgba(255, 119, 68, 0.15); }
-        body.theme-sunset #aiOutput { border-left-color: #ff7744; }
         body.theme-sunset #panel { background: rgba(255, 119, 68, 0.04); border-color: rgba(255, 119, 68, 0.08); }
         body.theme-sunset .ai-section { background: rgba(255, 119, 68, 0.02); border-color: rgba(255, 119, 68, 0.06); }
         body.theme-sunset .header { border-bottom-color: rgba(255, 119, 68, 0.08); }
-        body.theme-sunset select, body.theme-sunset input { background: rgba(255, 119, 68, 0.04); color: #ffaa88; border-color: rgba(255, 119, 68, 0.08); }
-        body.theme-sunset select option { background: #1a0a0a; color: #ffaa88; }
-        body.theme-sunset .ai-controls { background: rgba(255, 119, 68, 0.03); }
 
         body.theme-forest { background: #0a1a0a; color: #88ff88; }
         body.theme-forest .btn-primary { background: #55ff55; color: #0a1a0a; }
         body.theme-forest select:focus, body.theme-forest input:focus { border-color: #55ff55; box-shadow: 0 0 0 4px rgba(85, 255, 85, 0.15); }
-        body.theme-forest #aiOutput { border-left-color: #55ff55; }
         body.theme-forest #panel { background: rgba(85, 255, 85, 0.04); border-color: rgba(85, 255, 85, 0.08); }
         body.theme-forest .ai-section { background: rgba(85, 255, 85, 0.02); border-color: rgba(85, 255, 85, 0.06); }
         body.theme-forest .header { border-bottom-color: rgba(85, 255, 85, 0.08); }
-        body.theme-forest select, body.theme-forest input { background: rgba(85, 255, 85, 0.04); color: #88ff88; border-color: rgba(85, 255, 85, 0.08); }
-        body.theme-forest select option { background: #0a1a0a; color: #88ff88; }
-        body.theme-forest .ai-controls { background: rgba(85, 255, 85, 0.03); }
 
         body.theme-cosmos { background: #05050f; color: #cc88ff; }
         body.theme-cosmos .btn-primary { background: #aa44ff; color: #05050f; }
         body.theme-cosmos select:focus, body.theme-cosmos input:focus { border-color: #aa44ff; box-shadow: 0 0 0 4px rgba(170, 68, 255, 0.15); }
-        body.theme-cosmos #aiOutput { border-left-color: #aa44ff; }
         body.theme-cosmos #panel { background: rgba(170, 68, 255, 0.04); border-color: rgba(170, 68, 255, 0.08); }
         body.theme-cosmos .ai-section { background: rgba(170, 68, 255, 0.02); border-color: rgba(170, 68, 255, 0.06); }
         body.theme-cosmos .header { border-bottom-color: rgba(170, 68, 255, 0.08); }
-        body.theme-cosmos select, body.theme-cosmos input { background: rgba(170, 68, 255, 0.04); color: #cc88ff; border-color: rgba(170, 68, 255, 0.08); }
-        body.theme-cosmos select option { background: #05050f; color: #cc88ff; }
-        body.theme-cosmos .ai-controls { background: rgba(170, 68, 255, 0.03); }
 
         body.theme-lava { background: #1a0a05; color: #ff8866; }
         body.theme-lava .btn-primary { background: #ff5533; color: #1a0a05; }
         body.theme-lava select:focus, body.theme-lava input:focus { border-color: #ff5533; box-shadow: 0 0 0 4px rgba(255, 85, 51, 0.15); }
-        body.theme-lava #aiOutput { border-left-color: #ff5533; }
         body.theme-lava #panel { background: rgba(255, 85, 51, 0.04); border-color: rgba(255, 85, 51, 0.08); }
         body.theme-lava .ai-section { background: rgba(255, 85, 51, 0.02); border-color: rgba(255, 85, 51, 0.06); }
         body.theme-lava .header { border-bottom-color: rgba(255, 85, 51, 0.08); }
-        body.theme-lava select, body.theme-lava input { background: rgba(255, 85, 51, 0.04); color: #ff8866; border-color: rgba(255, 85, 51, 0.08); }
-        body.theme-lava select option { background: #1a0a05; color: #ff8866; }
-        body.theme-lava .ai-controls { background: rgba(255, 85, 51, 0.03); }
 
         body.theme-gold { background: #1a1a0a; color: #ffdd88; }
         body.theme-gold .btn-primary { background: #ffcc44; color: #1a1a0a; }
         body.theme-gold select:focus, body.theme-gold input:focus { border-color: #ffcc44; box-shadow: 0 0 0 4px rgba(255, 204, 68, 0.15); }
-        body.theme-gold #aiOutput { border-left-color: #ffcc44; }
         body.theme-gold #panel { background: rgba(255, 204, 68, 0.04); border-color: rgba(255, 204, 68, 0.08); }
         body.theme-gold .ai-section { background: rgba(255, 204, 68, 0.02); border-color: rgba(255, 204, 68, 0.06); }
         body.theme-gold .header { border-bottom-color: rgba(255, 204, 68, 0.08); }
-        body.theme-gold select, body.theme-gold input { background: rgba(255, 204, 68, 0.04); color: #ffdd88; border-color: rgba(255, 204, 68, 0.08); }
-        body.theme-gold select option { background: #1a1a0a; color: #ffdd88; }
-        body.theme-gold .ai-controls { background: rgba(255, 204, 68, 0.03); }
 
         body.theme-purple { background: #0a0a1a; color: #dd88ff; }
         body.theme-purple .btn-primary { background: #cc44ff; color: #0a0a1a; }
         body.theme-purple select:focus, body.theme-purple input:focus { border-color: #cc44ff; box-shadow: 0 0 0 4px rgba(204, 68, 255, 0.15); }
-        body.theme-purple #aiOutput { border-left-color: #cc44ff; }
         body.theme-purple #panel { background: rgba(204, 68, 255, 0.04); border-color: rgba(204, 68, 255, 0.08); }
         body.theme-purple .ai-section { background: rgba(204, 68, 255, 0.02); border-color: rgba(204, 68, 255, 0.06); }
         body.theme-purple .header { border-bottom-color: rgba(204, 68, 255, 0.08); }
-        body.theme-purple select, body.theme-purple input { background: rgba(204, 68, 255, 0.04); color: #dd88ff; border-color: rgba(204, 68, 255, 0.08); }
-        body.theme-purple select option { background: #0a0a1a; color: #dd88ff; }
-        body.theme-purple .ai-controls { background: rgba(204, 68, 255, 0.03); }
 
         body.theme-cherry { background: #1a0a12; color: #ff88bb; }
         body.theme-cherry .btn-primary { background: #ff44aa; color: #1a0a12; }
         body.theme-cherry select:focus, body.theme-cherry input:focus { border-color: #ff44aa; box-shadow: 0 0 0 4px rgba(255, 68, 170, 0.15); }
-        body.theme-cherry #aiOutput { border-left-color: #ff44aa; }
         body.theme-cherry #panel { background: rgba(255, 68, 170, 0.04); border-color: rgba(255, 68, 170, 0.08); }
         body.theme-cherry .ai-section { background: rgba(255, 68, 170, 0.02); border-color: rgba(255, 68, 170, 0.06); }
         body.theme-cherry .header { border-bottom-color: rgba(255, 68, 170, 0.08); }
-        body.theme-cherry select, body.theme-cherry input { background: rgba(255, 68, 170, 0.04); color: #ff88bb; border-color: rgba(255, 68, 170, 0.08); }
-        body.theme-cherry select option { background: #1a0a12; color: #ff88bb; }
-        body.theme-cherry .ai-controls { background: rgba(255, 68, 170, 0.03); }
 
         body.theme-emerald { background: #0a1a0a; color: #66ffaa; }
         body.theme-emerald .btn-primary { background: #44ff88; color: #0a1a0a; }
         body.theme-emerald select:focus, body.theme-emerald input:focus { border-color: #44ff88; box-shadow: 0 0 0 4px rgba(68, 255, 136, 0.15); }
-        body.theme-emerald #aiOutput { border-left-color: #44ff88; }
         body.theme-emerald #panel { background: rgba(68, 255, 136, 0.04); border-color: rgba(68, 255, 136, 0.08); }
         body.theme-emerald .ai-section { background: rgba(68, 255, 136, 0.02); border-color: rgba(68, 255, 136, 0.06); }
         body.theme-emerald .header { border-bottom-color: rgba(68, 255, 136, 0.08); }
-        body.theme-emerald select, body.theme-emerald input { background: rgba(68, 255, 136, 0.04); color: #66ffaa; border-color: rgba(68, 255, 136, 0.08); }
-        body.theme-emerald select option { background: #0a1a0a; color: #66ffaa; }
-        body.theme-emerald .ai-controls { background: rgba(68, 255, 136, 0.03); }
 
         body.theme-sunny { background: #f5ede1; color: #3a2a1a; }
         body.theme-sunny .btn-primary { background: #d4a040; color: #f5ede1; }
         body.theme-sunny select:focus, body.theme-sunny input:focus { border-color: #d4a040; box-shadow: 0 0 0 4px rgba(212, 160, 64, 0.15); }
-        body.theme-sunny #aiOutput { border-left-color: #d4a040; }
         body.theme-sunny #panel { background: rgba(212, 160, 64, 0.05); border-color: rgba(212, 160, 64, 0.1); }
         body.theme-sunny .ai-section { background: rgba(212, 160, 64, 0.03); border-color: rgba(212, 160, 64, 0.06); }
         body.theme-sunny .header { border-bottom-color: rgba(212, 160, 64, 0.1); }
-        body.theme-sunny select, body.theme-sunny input { background: rgba(212, 160, 64, 0.05); color: #3a2a1a; border-color: rgba(212, 160, 64, 0.08); }
-        body.theme-sunny select option { background: #f5ede1; color: #3a2a1a; }
-        body.theme-sunny .ai-controls { background: rgba(212, 160, 64, 0.04); }
 
         body.theme-ice { background: #0a1a2a; color: #88ddff; }
         body.theme-ice .btn-primary { background: #44bbff; color: #0a1a2a; }
         body.theme-ice select:focus, body.theme-ice input:focus { border-color: #44bbff; box-shadow: 0 0 0 4px rgba(68, 187, 255, 0.15); }
-        body.theme-ice #aiOutput { border-left-color: #44bbff; }
         body.theme-ice #panel { background: rgba(68, 187, 255, 0.04); border-color: rgba(68, 187, 255, 0.08); }
         body.theme-ice .ai-section { background: rgba(68, 187, 255, 0.02); border-color: rgba(68, 187, 255, 0.06); }
         body.theme-ice .header { border-bottom-color: rgba(68, 187, 255, 0.08); }
-        body.theme-ice select, body.theme-ice input { background: rgba(68, 187, 255, 0.04); color: #88ddff; border-color: rgba(68, 187, 255, 0.08); }
-        body.theme-ice select option { background: #0a1a2a; color: #88ddff; }
-        body.theme-ice .ai-controls { background: rgba(68, 187, 255, 0.03); }
 
         body.theme-wine { background: #1a0508; color: #ff6677; }
         body.theme-wine .btn-primary { background: #ee3355; color: #1a0508; }
         body.theme-wine select:focus, body.theme-wine input:focus { border-color: #ee3355; box-shadow: 0 0 0 4px rgba(238, 51, 85, 0.15); }
-        body.theme-wine #aiOutput { border-left-color: #ee3355; }
         body.theme-wine #panel { background: rgba(238, 51, 85, 0.04); border-color: rgba(238, 51, 85, 0.08); }
         body.theme-wine .ai-section { background: rgba(238, 51, 85, 0.02); border-color: rgba(238, 51, 85, 0.06); }
         body.theme-wine .header { border-bottom-color: rgba(238, 51, 85, 0.08); }
-        body.theme-wine select, body.theme-wine input { background: rgba(238, 51, 85, 0.04); color: #ff6677; border-color: rgba(238, 51, 85, 0.08); }
-        body.theme-wine select option { background: #1a0508; color: #ff6677; }
-        body.theme-wine .ai-controls { background: rgba(238, 51, 85, 0.03); }
 
-        /* ============================================================
-           МОБИЛЬНАЯ АДАПТАЦИЯ
-           ============================================================ */
         @media (max-width: 600px) {
             body { padding: 14px; }
             .header h1 { font-size: 20px; }
@@ -775,88 +790,82 @@ html_template = """
             .ai-section { padding: 16px; }
             #panel { padding: 16px; }
             .panel-grid { grid-template-columns: 1fr; }
-            .ai-input-group input { min-width: 120px; }
-            .ai-controls { flex-direction: column; gap: 6px; }
-            .ai-section h3 { font-size: 18px; }
+            .modal { padding: 24px; }
+            .chat-message { max-width: 95%; }
         }
     </style>
 </head>
 <body class="theme-neon">
-    <!-- ОВЕРЛЕЙ ДЛЯ ПЛАВНОГО ПЕРЕКЛЮЧЕНИЯ -->
-    <div id="fadeOverlay"></div>
-
     <div class="container">
-        <div class="header">
-            <h1>
-                <span class="icon">🧠</span>
-                NeoBrain
-            </h1>
+        <header class="header">
+            <h1>NeoBrain</h1>
             <div class="header-actions">
-                <button class="btn btn-ghost" id="toggleBtn">▼ Панель</button>
+                <button class="btn btn-ghost" onclick="openShareModal()">Поделиться</button>
+                <button class="btn btn-ghost" id="toggleBtn">Панель</button>
             </div>
-        </div>
+        </header>
 
         <div id="panel">
             <div class="panel-grid">
                 <div class="panel-section">
-                    <div class="panel-section-title">👥 Персонажи</div>
+                    <div class="panel-section-title">Персонажи</div>
                     <div class="panel-row">
                         <select id="charSelect"></select>
-                        <button class="btn btn-sm" id="addCharBtn">➕</button>
+                        <button class="btn btn-sm" id="addCharBtn">+</button>
                         <button class="btn btn-sm" id="randomCharBtn">🎲</button>
                         <button class="btn btn-sm btn-danger" id="deleteCharBtn">🗑</button>
                     </div>
                     <div class="panel-row">
-                        <button class="btn btn-sm btn-success" id="exportCharsBtn">📤 Экспорт</button>
-                        <button class="btn btn-sm btn-warning" id="importCharsBtn">📥 Импорт</button>
+                        <button class="btn btn-sm btn-success" id="exportCharsBtn">Экспорт</button>
+                        <button class="btn btn-sm" id="importCharsBtn">Импорт</button>
                     </div>
                     <div id="charList"></div>
                 </div>
                 <div class="panel-section">
-                    <div class="panel-section-title">⚙️ Настройки</div>
+                    <div class="panel-section-title">Настройки</div>
                     <div class="panel-row">
                         <span style="opacity:0.5; font-size:13px;">🤖</span>
                         <select id="providerSelect">
-                            <option value="ollama">🦙 Ollama (локально)</option>
-                            <option value="openai">🤖 OpenAI</option>
-                            <option value="gemini">🔵 Google Gemini</option>
-                            <option value="claude">🟣 Anthropic Claude</option>
+                            <option value="ollama">Ollama</option>
+                            <option value="openai">OpenAI</option>
+                            <option value="gemini">Gemini</option>
+                            <option value="claude">Claude</option>
                         </select>
                     </div>
                     <div class="panel-row" id="modelRow">
                         <span style="opacity:0.5; font-size:13px;">📦</span>
                         <select id="modelSelect">
-                            <option value="qwen2.5-coder:1.5b">⚡ Быстрая</option>
-                            <option value="llama3.2:3b">🌿 Средняя</option>
-                            <option value="mistral:7b">🧠 Умная</option>
-                            <option value="llama3.1:8b">🔥 Тяжёлая</option>
+                            <option value="qwen2.5-coder:1.5b">Быстрая</option>
+                            <option value="llama3.2:3b">Средняя</option>
+                            <option value="mistral:7b">Умная</option>
+                            <option value="llama3.1:8b">Тяжёлая</option>
                         </select>
                         <span class="badge" id="modelStatus">✅</span>
                     </div>
                     <div class="panel-row" id="apiKeyRow" style="display:none;">
                         <span style="opacity:0.5; font-size:13px;">🔑</span>
                         <input type="password" id="apiKeyInput" placeholder="Введите API ключ...">
-                        <button class="btn btn-sm btn-success" id="saveApiKeyBtn">💾 Сохранить</button>
-                        <span class="badge" id="apiKeyStatus">❌ Не указан</span>
+                        <button class="btn btn-sm btn-success" id="saveApiKeyBtn">Сохранить</button>
+                        <span class="badge" id="apiKeyStatus">❌</span>
                     </div>
                     <div class="panel-row">
                         <span style="opacity:0.5; font-size:13px;">🎨</span>
                         <select id="themeSelect">
-                            <option value="neon">💠 Неон</option>
-                            <option value="cyber">🌀 Киберпанк</option>
-                            <option value="matrix">💚 Матрица</option>
-                            <option value="ocean">🌊 Океан</option>
-                            <option value="sunset">🌅 Закат</option>
-                            <option value="forest">🌳 Лес</option>
-                            <option value="cosmos">🌠 Космос</option>
-                            <option value="lava">🌋 Лава</option>
-                            <option value="gold">✨ Золото</option>
-                            <option value="purple">🟣 Пурпур</option>
-                            <option value="cherry">🌸 Вишня</option>
-                            <option value="emerald">💎 Изумруд</option>
-                            <option value="sunny">☀️ Солнечная</option>
-                            <option value="ice">❄️ Лёд</option>
-                            <option value="wine">🍷 Вино</option>
+                            <option value="neon">Неон</option>
+                            <option value="cyber">Киберпанк</option>
+                            <option value="matrix">Матрица</option>
+                            <option value="ocean">Океан</option>
+                            <option value="sunset">Закат</option>
+                            <option value="forest">Лес</option>
+                            <option value="cosmos">Космос</option>
+                            <option value="lava">Лава</option>
+                            <option value="gold">Золото</option>
+                            <option value="purple">Пурпур</option>
+                            <option value="cherry">Вишня</option>
+                            <option value="emerald">Изумруд</option>
+                            <option value="sunny">Солнечная</option>
+                            <option value="ice">Лёд</option>
+                            <option value="wine">Вино</option>
                         </select>
                         <span class="badge" id="themeStatus">✅</span>
                     </div>
@@ -865,19 +874,36 @@ html_template = """
         </div>
 
         <div class="ai-section">
-            <h3>🤖 Общение с AI</h3>
+            <h3>Общение с AI</h3>
             <div class="ai-controls">
-                <span><span class="label">Провайдер:</span> <span id="providerDisplay">🦙 Ollama</span></span>
+                <span><span class="label">Провайдер:</span> <span id="providerDisplay">Ollama</span></span>
                 <span><span class="label">Модель:</span> <span id="modelDisplay">qwen2.5-coder:1.5b</span></span>
             </div>
             <div class="ai-input-group">
                 <input type="text" id="aiInput" placeholder="Напиши что-нибудь...">
-                <button class="btn btn-primary" id="aiSendBtn">➤ Отправить</button>
+                <button class="btn btn-primary" id="aiSendBtn">Отправить</button>
             </div>
+            <div id="chatContainer"></div>
             <div id="aiOutput"></div>
         </div>
 
-        <div id="status">✨ Готов к работе...</div>
+        <div id="status">Готов к работе...</div>
+    </div>
+
+    <div class="modal-overlay" id="shareModal" onclick="closeModalOutside(event)">
+        <div class="modal">
+            <h2>Поделиться доступом</h2>
+            <p>Отправь эту ссылку друзьям в одной сети:</p>
+            <div class="share-link">
+                <span id="shareLinkText">Загрузка...</span>
+                <button onclick="copyShareLink()">Копировать</button>
+            </div>
+            <p style="font-size:13px; opacity:0.6;">
+                Друзья должны быть в одной Wi-Fi сети.<br>
+                Если доступ не работает — проверь брандмауэр.
+            </p>
+            <button class="btn-close-modal" onclick="closeShareModal()">Закрыть</button>
+        </div>
     </div>
 
     <script>
@@ -891,12 +917,99 @@ html_template = """
             toggleBtn.addEventListener('click', function() {
                 panelOpen = !panelOpen;
                 panel.style.display = panelOpen ? 'block' : 'none';
-                toggleBtn.textContent = panelOpen ? '▲ Панель' : '▼ Панель';
+                toggleBtn.textContent = panelOpen ? '▲' : '▼';
             });
         }
 
         // ============================================================
-        // 2. ПРОВАЙДЕР И МОДЕЛЬ
+        // 2. ЧАТ (ИСТОРИЯ)
+        // ============================================================
+        var chatContainer = document.getElementById('chatContainer');
+        var historyLoaded = false;
+
+        function addMessageToChat(role, content) {
+            var div = document.createElement('div');
+            div.className = 'chat-message ' + role;
+            var roleLabel = role === 'user' ? '👤 Вы' : '🧠 AI';
+            div.innerHTML = '<div class="role">' + roleLabel + '</div>' + content;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            // Сохраняем историю
+            if (historyLoaded) {
+                saveMessageToHistory(role, content);
+            }
+        }
+
+        function saveMessageToHistory(role, content) {
+            var history = JSON.parse(localStorage.getItem('chat_history') || '[]');
+            history.push({ role: role, content: content, timestamp: Date.now() });
+            // Ограничиваем историю 100 сообщениями
+            if (history.length > 100) {
+                history = history.slice(-100);
+            }
+            localStorage.setItem('chat_history', JSON.stringify(history));
+        }
+
+        function loadHistoryFromLocal() {
+            var history = JSON.parse(localStorage.getItem('chat_history') || '[]');
+            if (history.length > 0) {
+                chatContainer.innerHTML = '';
+                history.forEach(function(msg) {
+                    var div = document.createElement('div');
+                    div.className = 'chat-message ' + msg.role;
+                    var roleLabel = msg.role === 'user' ? '👤 Вы' : '🧠 AI';
+                    div.innerHTML = '<div class="role">' + roleLabel + '</div>' + msg.content;
+                    chatContainer.appendChild(div);
+                });
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+            historyLoaded = true;
+        }
+
+        // ============================================================
+        // 3. ПОДЕЛИТЬСЯ
+        // ============================================================
+        function openShareModal() {
+            document.getElementById('shareModal').classList.add('active');
+            document.body.style.overflow = 'hidden';
+            
+            fetch('/get_ip')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('shareLinkText').textContent = 'http://' + data.ip + ':8000';
+                })
+                .catch(() => {
+                    document.getElementById('shareLinkText').textContent = 'http://localhost:8000';
+                });
+        }
+
+        function closeShareModal() {
+            document.getElementById('shareModal').classList.remove('active');
+            document.body.style.overflow = 'auto';
+        }
+
+        function closeModalOutside(e) {
+            if (e.target === e.currentTarget) closeShareModal();
+        }
+
+        function copyShareLink() {
+            var text = document.getElementById('shareLinkText').textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                var status = document.getElementById('status');
+                if (status) status.textContent = 'Ссылка скопирована!';
+            }).catch(() => {
+                var status = document.getElementById('status');
+                if (status) status.textContent = 'Не удалось скопировать';
+            });
+        }
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeShareModal();
+        });
+
+        // ============================================================
+        // 4. ПРОВАЙДЕР И МОДЕЛЬ
         // ============================================================
         var currentProvider = 'ollama';
         var currentModel = 'qwen2.5-coder:1.5b';
@@ -912,10 +1025,10 @@ html_template = """
         var apiKeyStatus = document.getElementById('apiKeyStatus');
 
         var PROVIDER_NAMES = {
-            'ollama': '🦙 Ollama',
-            'openai': '🤖 OpenAI',
-            'gemini': '🔵 Google Gemini',
-            'claude': '🟣 Anthropic Claude'
+            'ollama': 'Ollama',
+            'openai': 'OpenAI',
+            'gemini': 'Google Gemini',
+            'claude': 'Anthropic Claude'
         };
 
         var PROVIDER_MODELS = {
@@ -934,7 +1047,6 @@ html_template = """
                 option.textContent = model;
                 modelSelect.appendChild(option);
             });
-            // Если текущая модель не в списке, ставим первую
             var found = false;
             for (var i = 0; i < modelSelect.options.length; i++) {
                 if (modelSelect.options[i].value === currentModel) {
@@ -954,12 +1066,10 @@ html_template = """
             if (modelDisplay) modelDisplay.textContent = currentModel;
             if (modelStatus) modelStatus.textContent = '✅ ' + currentModel;
             
-            // Показываем/скрываем поле для API ключа
             if (currentProvider === 'ollama') {
                 apiKeyRow.style.display = 'none';
             } else {
                 apiKeyRow.style.display = 'flex';
-                // Проверяем, есть ли ключ
                 checkApiKeyStatus();
             }
         }
@@ -990,7 +1100,6 @@ html_template = """
             });
         }
 
-        // Сохранение API ключа
         if (saveApiKeyBtn) {
             saveApiKeyBtn.addEventListener('click', function() {
                 var key = apiKeyInput.value.trim();
@@ -999,7 +1108,7 @@ html_template = """
                     apiKeyInput.value = '';
                     checkApiKeyStatus();
                     var status = document.getElementById('status');
-                    if (status) status.textContent = '✅ API ключ для ' + PROVIDER_NAMES[currentProvider] + ' сохранён!';
+                    if (status) status.textContent = 'API ключ сохранён!';
                 } else {
                     alert('Введите API ключ!');
                 }
@@ -1007,36 +1116,18 @@ html_template = """
         }
 
         // ============================================================
-        // 3. ПЛАВНОЕ ПЕРЕКЛЮЧЕНИЕ ТЕМ
+        // 5. ТЕМЫ
         // ============================================================
         var themeSelect = document.getElementById('themeSelect');
         var themeStatus = document.getElementById('themeStatus');
-        var overlay = document.getElementById('fadeOverlay');
         var body = document.body;
-        var isChanging = false;
 
         function switchTheme(theme) {
-            if (isChanging) return;
-            isChanging = true;
-
-            overlay.classList.add('active');
-
-            setTimeout(function() {
-                body.className = 'theme-' + theme;
-                localStorage.setItem('neobrain_theme', theme);
-                if (themeStatus) themeStatus.textContent = '✅ ' + theme;
-
-                setTimeout(function() {
-                    overlay.classList.remove('active');
-                    
-                    setTimeout(function() {
-                        isChanging = false;
-                    }, 200);
-                }, 400);
-            }, 600);
+            body.className = 'theme-' + theme;
+            localStorage.setItem('neobrain_theme', theme);
+            if (themeStatus) themeStatus.textContent = '✅ ' + theme;
         }
 
-        // Инициализация темы
         if (themeSelect) {
             var savedTheme = localStorage.getItem('neobrain_theme');
             if (savedTheme) {
@@ -1055,31 +1146,22 @@ html_template = """
             }
 
             themeSelect.addEventListener('change', function() {
-                var newTheme = this.value;
-                switchTheme(newTheme);
+                switchTheme(this.value);
             });
         }
 
         // ============================================================
-        // 4. ПЕРСОНАЖИ
+        // 6. ПЕРСОНАЖИ
         // ============================================================
         var characters = [];
         var STORAGE_CHARS = 'ai_chat_characters';
 
         var NAMES = {
-            male: [
-                'Алексей', 'Дмитрий', 'Максим', 'Артём', 'Иван', 'Сергей', 'Андрей', 'Егор', 'Никита', 'Михаил',
-                'Владимир', 'Александр', 'Павел', 'Виктор', 'Василий', 'Григорий', 'Евгений', 'Игорь', 'Леонид', 'Олег',
-                'Станислав', 'Юрий', 'Ярослав', 'Борис', 'Глеб', 'Даниил', 'Захар', 'Илья', 'Кирилл', 'Константин',
-                'James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph', 'Thomas', 'Charles',
-                'Christopher', 'Daniel', 'Matthew', 'Anthony', 'Mark', 'Donald', 'Steven', 'Paul', 'Andrew', 'Joshua'
+            male: ['Алексей', 'Дмитрий', 'Максим', 'Артём', 'Иван', 'Сергей', 'Андрей', 'Егор', 'Никита', 'Михаил',
+                'James', 'John', 'Robert', 'Michael', 'William', 'David', 'Richard', 'Joseph', 'Thomas', 'Charles'
             ],
-            female: [
-                'Анна', 'Мария', 'Екатерина', 'Ольга', 'Татьяна', 'Наталья', 'Ирина', 'Светлана', 'Анастасия', 'Дарья',
-                'Елена', 'Александра', 'Людмила', 'Галина', 'Валентина', 'Ксения', 'Полина', 'Вероника', 'София', 'Арина',
-                'Кира', 'Милана', 'Алиса', 'Алина', 'Виктория', 'Елизавета', 'Марина', 'Надежда', 'Раиса', 'Зоя',
-                'Mary', 'Patricia', 'Jennifer', 'Linda', 'Barbara', 'Elizabeth', 'Susan', 'Jessica', 'Sarah', 'Karen',
-                'Lisa', 'Nancy', 'Betty', 'Margaret', 'Sandra', 'Ashley', 'Kimberly', 'Emily', 'Donna', 'Michelle'
+            female: ['Анна', 'Мария', 'Екатерина', 'Ольга', 'Татьяна', 'Наталья', 'Ирина', 'Светлана', 'Анастасия', 'Дарья',
+                'Mary', 'Patricia', 'Jennifer', 'Linda', 'Barbara', 'Elizabeth', 'Susan', 'Jessica', 'Sarah', 'Karen'
             ]
         };
 
@@ -1089,10 +1171,10 @@ html_template = """
                 try {
                     characters = JSON.parse(saved);
                 } catch(e) {
-                    characters = [{ id: 'default', name: '🤖 Помощник' }];
+                    characters = [{ id: 'default', name: 'Помощник' }];
                 }
             } else {
-                characters = [{ id: 'default', name: '🤖 Помощник' }];
+                characters = [{ id: 'default', name: 'Помощник' }];
             }
             saveCharacters();
             renderCharacterSelect();
@@ -1115,7 +1197,7 @@ html_template = """
                 select.appendChild(option);
             }
             var status = document.getElementById('status');
-            if (status) status.textContent = '✅ Загружено персонажей: ' + characters.length;
+            if (status) status.textContent = 'Загружено: ' + characters.length;
         }
 
         function renderCharList() {
@@ -1126,30 +1208,49 @@ html_template = """
                 var char = characters[i];
                 var div = document.createElement('div');
                 div.className = 'char-item';
+                
                 var nameSpan = document.createElement('span');
                 nameSpan.className = 'char-name';
                 nameSpan.textContent = char.name;
                 div.appendChild(nameSpan);
 
+                var actionsDiv = document.createElement('div');
+                actionsDiv.className = 'char-actions';
+
                 if (char.id !== 'default') {
+                    var shareBtn = document.createElement('button');
+                    shareBtn.className = 'char-share';
+                    shareBtn.textContent = '📤';
+                    shareBtn.title = 'Поделиться персонажем';
+                    shareBtn.onclick = (function(id) {
+                        return function(e) {
+                            e.stopPropagation();
+                            shareCharacter(id);
+                        };
+                    })(char.id);
+                    actionsDiv.appendChild(shareBtn);
+
                     var delBtn = document.createElement('button');
                     delBtn.className = 'char-delete';
                     delBtn.textContent = '✖';
                     delBtn.title = 'Удалить';
                     delBtn.onclick = (function(id) {
-                        return function() {
+                        return function(e) {
+                            e.stopPropagation();
                             deleteCharacter(id);
                         };
                     })(char.id);
-                    div.appendChild(delBtn);
+                    actionsDiv.appendChild(delBtn);
                 }
+
+                div.appendChild(actionsDiv);
                 container.appendChild(div);
             }
         }
 
         function deleteCharacter(charId) {
             if (charId === 'default') {
-                alert('🧠 Главный ИИ не может быть удалён!');
+                alert('Главный ИИ не может быть удалён!');
                 return;
             }
             if (confirm('Удалить персонажа?')) {
@@ -1163,7 +1264,7 @@ html_template = """
                 renderCharacterSelect();
                 renderCharList();
                 var status = document.getElementById('status');
-                if (status) status.textContent = '🗑 Персонаж удалён';
+                if (status) status.textContent = 'Персонаж удалён';
             }
         }
 
@@ -1175,9 +1276,24 @@ html_template = """
             renderCharList();
         }
 
-        // ============================================================
-        // ЭКСПОРТ/ИМПОРТ ПЕРСОНАЖЕЙ
-        // ============================================================
+        function shareCharacter(charId) {
+            var char = characters.find(function(c) { return c.id === charId; });
+            if (!char) return;
+            
+            var data = JSON.stringify(char, null, 2);
+            var blob = new Blob([data], {type: 'application/json'});
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = char.name.replace(/[^a-zA-Zа-яА-Я0-9]/g, '_') + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            var status = document.getElementById('status');
+            if (status) status.textContent = 'Персонаж экспортирован!';
+        }
+
         function exportCharacters() {
             var data = JSON.stringify(characters, null, 2);
             var blob = new Blob([data], {type: 'application/json'});
@@ -1190,7 +1306,7 @@ html_template = """
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
             var status = document.getElementById('status');
-            if (status) status.textContent = '📤 Экспортировано персонажей: ' + characters.length;
+            if (status) status.textContent = 'Экспортировано: ' + characters.length;
         }
 
         function importCharacters() {
@@ -1205,23 +1321,22 @@ html_template = """
                     try {
                         var imported = JSON.parse(ev.target.result);
                         if (!Array.isArray(imported)) {
-                            alert('❌ Неверный формат файла!');
+                            alert('Неверный формат!');
                             return;
                         }
-                        // Проверяем, есть ли персонаж с id 'default'
                         var hasDefault = imported.some(function(c) { return c.id === 'default'; });
                         if (!hasDefault) {
-                            imported.unshift({ id: 'default', name: '🤖 Помощник' });
+                            imported.unshift({ id: 'default', name: 'Помощник' });
                         }
                         characters = imported;
                         saveCharacters();
                         renderCharacterSelect();
                         renderCharList();
                         var status = document.getElementById('status');
-                        if (status) status.textContent = '📥 Импортировано персонажей: ' + characters.length;
-                        alert('✅ Импортировано ' + characters.length + ' персонажей!');
+                        if (status) status.textContent = 'Импортировано: ' + characters.length;
+                        alert('Импортировано ' + characters.length + ' персонажей!');
                     } catch(err) {
-                        alert('❌ Ошибка при импорте: ' + err.message);
+                        alert('Ошибка: ' + err.message);
                     }
                 };
                 reader.readAsText(file);
@@ -1229,50 +1344,30 @@ html_template = """
             input.click();
         }
 
-        // ============================================================
-        // ГЕНЕРАЦИЯ СЛУЧАЙНОГО ПЕРСОНАЖА
-        // ============================================================
         function generateRandomCharacter() {
             var existingNames = characters.map(function(char) {
                 return char.name.replace(/[👨👩👤🤖]/g, '').trim();
             });
-
             var allNames = NAMES.male.concat(NAMES.female);
             var availableNames = allNames.filter(function(name) {
                 return existingNames.indexOf(name) === -1;
             });
-
             if (availableNames.length === 0) {
                 var status = document.getElementById('status');
-                if (status) status.textContent = '⚠️ Все имена уже использованы! Удалите несколько персонажей.';
+                if (status) status.textContent = 'Все имена использованы!';
                 return;
             }
-
             var randomIndex = Math.floor(Math.random() * availableNames.length);
             var selectedName = availableNames[randomIndex];
-
             var isMale = NAMES.male.indexOf(selectedName) !== -1;
             var isFemale = NAMES.female.indexOf(selectedName) !== -1;
-            
-            var genderIcon;
-            if (isMale) {
-                genderIcon = '👨';
-            } else if (isFemale) {
-                genderIcon = '👩';
-            } else {
-                genderIcon = '👤';
-            }
-
+            var genderIcon = isMale ? '👨' : isFemale ? '👩' : '👤';
             var fullName = genderIcon + ' ' + selectedName;
             addCharacter(fullName);
-            
             var status = document.getElementById('status');
-            if (status) status.textContent = '🎲 Создан персонаж: ' + fullName;
+            if (status) status.textContent = 'Создан персонаж: ' + fullName;
         }
 
-        // ============================================================
-        // ОБРАБОТЧИКИ КНОПОК
-        // ============================================================
         var addCharBtn = document.getElementById('addCharBtn');
         if (addCharBtn) {
             addCharBtn.addEventListener('click', function() {
@@ -1281,15 +1376,13 @@ html_template = """
                     var existing = characters.some(function(char) {
                         return char.name.replace(/[👨👩👤🤖]/g, '').trim().toLowerCase() === name.trim().toLowerCase();
                     });
-                    
                     if (existing) {
-                        alert('⚠️ Персонаж с таким именем уже существует!');
+                        alert('Персонаж уже существует!');
                         return;
                     }
-                    
                     addCharacter('👤 ' + name.trim());
                     var status = document.getElementById('status');
-                    if (status) status.textContent = '✅ Создан персонаж: ' + name.trim();
+                    if (status) status.textContent = 'Создан персонаж: ' + name.trim();
                 }
             });
         }
@@ -1306,13 +1399,11 @@ html_template = """
             deleteCharBtn.addEventListener('click', function() {
                 var select = document.getElementById('charSelect');
                 if (select) {
-                    var id = select.value;
-                    deleteCharacter(id);
+                    deleteCharacter(select.value);
                 }
             });
         }
 
-        // Экспорт/Импорт
         var exportCharsBtn = document.getElementById('exportCharsBtn');
         if (exportCharsBtn) {
             exportCharsBtn.addEventListener('click', exportCharacters);
@@ -1324,7 +1415,7 @@ html_template = """
         }
 
         // ============================================================
-        // 5. ОТПРАВКА СООБЩЕНИЯ В AI
+        // 7. ОТПРАВКА СООБЩЕНИЯ В AI
         // ============================================================
         var aiSendBtn = document.getElementById('aiSendBtn');
         if (aiSendBtn) {
@@ -1338,16 +1429,28 @@ html_template = """
                 var provider = currentProvider;
                 var model = currentModel;
 
-                output.textContent = '⏳ Думаю... (' + provider + '/' + model + ')';
-                input.disabled = true;
+                // Показываем сообщение пользователя сразу
+                addMessageToChat('user', text);
+                input.value = '';
 
-                // Для облачных провайдеров — берём API ключ из localStorage
+                // Показываем статус "печатает"
+                var thinkingDiv = document.createElement('div');
+                thinkingDiv.className = 'chat-message ai';
+                thinkingDiv.id = 'thinkingMessage';
+                thinkingDiv.innerHTML = '<div class="role">🧠 AI</div>Думаю...';
+                chatContainer.appendChild(thinkingDiv);
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+
                 var apiKey = null;
                 if (provider !== 'ollama') {
                     apiKey = localStorage.getItem('api_key_' + provider);
                     if (!apiKey || apiKey.length === 0) {
-                        output.textContent = '❌ API ключ для ' + PROVIDER_NAMES[provider] + ' не указан!';
-                        input.disabled = false;
+                        thinkingDiv.remove();
+                        var errorDiv = document.createElement('div');
+                        errorDiv.className = 'chat-message ai';
+                        errorDiv.innerHTML = '<div class="role">🧠 AI</div>❌ API ключ не указан!';
+                        chatContainer.appendChild(errorDiv);
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
                         return;
                     }
                 }
@@ -1367,17 +1470,24 @@ html_template = """
                     return response.json();
                 })
                 .then(function(data) {
+                    thinkingDiv.remove();
                     if (data.error) {
-                        output.textContent = '❌ ' + data.error;
+                        var errorDiv = document.createElement('div');
+                        errorDiv.className = 'chat-message ai';
+                        errorDiv.innerHTML = '<div class="role">🧠 AI</div>❌ ' + data.error;
+                        chatContainer.appendChild(errorDiv);
                     } else {
-                        output.textContent = data.response || '⚠️ Ответ не получен';
+                        addMessageToChat('ai', data.response || '⚠️ Ответ не получен');
                     }
-                    input.disabled = false;
-                    input.value = '';
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
                 })
                 .catch(function(error) {
-                    output.textContent = '❌ Ошибка: ' + error.message;
-                    input.disabled = false;
+                    thinkingDiv.remove();
+                    var errorDiv = document.createElement('div');
+                    errorDiv.className = 'chat-message ai';
+                    errorDiv.innerHTML = '<div class="role">🧠 AI</div>❌ Ошибка: ' + error.message;
+                    chatContainer.appendChild(errorDiv);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
                 });
             });
         }
@@ -1393,10 +1503,9 @@ html_template = """
         }
 
         // ============================================================
-        // 6. ИНИЦИАЛИЗАЦИЯ
+        // 8. ИНИЦИАЛИЗАЦИЯ
         // ============================================================
         document.addEventListener('DOMContentLoaded', function() {
-            // Загружаем сохранённый провайдер
             var savedProvider = localStorage.getItem('neobrain_provider');
             if (savedProvider && providerSelect) {
                 var found = false;
@@ -1411,14 +1520,11 @@ html_template = """
                     currentProvider = savedProvider;
                 }
             }
-            
-            // Инициализируем модель
             updateModelSelect(currentProvider);
             updateDisplay();
             loadCharacters();
-
-            // Проверяем статус API ключа
             checkApiKeyStatus();
+            loadHistoryFromLocal();
         });
     </script>
 </body>
@@ -1431,6 +1537,10 @@ html_template = """
 @app.get("/")
 async def home():
     return HTMLResponse(html_template)
+
+@app.get("/get_ip")
+async def get_ip():
+    return {"ip": LOCAL_IP}
 
 @app.post("/ask")
 async def ask(request: Request):
@@ -1450,8 +1560,7 @@ async def ask(request: Request):
         elif provider == "claude":
             return ask_claude(prompt, api_key, model)
         else:
-            return {"error": f"❌ Неизвестный провайдер: {provider}"}
-
+            return {"error": f"Неизвестный провайдер: {provider}"}
     except Exception as e:
         return {"error": f"Ошибка: {str(e)}"}
 
@@ -1459,42 +1568,43 @@ async def ask(request: Request):
 # ЗАПУСК
 # ============================================================
 if __name__ == "__main__":
-    import uvicorn
-
-    # Проверяем Ollama
-    if not check_ollama():
-        print("\n" + "=" * 55)
-        print("⚠️  Ollama не обнаружена!")
-        print("Для работы NeoBrain нужно установить Ollama.")
-        print("📥 Скачайте: https://ollama.com")
-        print("После установки перезапустите NeoBrain.")
-        print("=" * 55)
-        input("\nНажмите Enter для выхода...")
+    try:
+        import webview
+    except ImportError:
+        print("Установи pywebview: python -m pip install pywebview")
         sys.exit(1)
 
-    # Открываем браузер автоматически
-    def open_browser():
-        time.sleep(2)
-        webbrowser.open("http://localhost:8000")
+    if not check_ollama():
+        print("\n" + "=" * 55)
+        print("Ollama не обнаружена!")
+        print("Для работы с локальными моделями установите Ollama.")
+        print("Скачайте: https://ollama.com")
+        print("Или используйте облачные провайдеры в настройках.")
+        print("=" * 55)
+        print("\nЗапуск NeoBrain без Ollama... (доступны только облачные AI)")
 
-    threading.Thread(target=open_browser, daemon=True).start()
+    def run_server():
+        uvicorn.run(app, host="0.0.0.0", port=8000)
 
-    try:
-        hostname = socket.gethostname()
-        local_ip = socket.gethostbyname(hostname)
-    except:
-        local_ip = "127.0.0.1"
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    time.sleep(2)
 
     print("\n" + "=" * 55)
-    print("🧠 NeoBrain запущен!")
-    print("📌 Открывается браузер...")
-    print(f"   → http://localhost:8000")
-    print("📦 Поддерживаемые провайдеры:")
-    print("   🦙 Ollama (локально)")
-    print("   🤖 OpenAI (GPT-3.5, GPT-4)")
-    print("   🔵 Google Gemini")
-    print("   🟣 Anthropic Claude")
-    print("\n⏹️  Для остановки нажми Ctrl+C")
+    print("NeoBrain запущен!")
+    print("Открывается окно приложения...")
+    print(f"Локальный адрес: http://{LOCAL_IP}:8000")
+    print("Закрой окно приложения для остановки")
     print("=" * 55 + "\n")
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    webview.create_window(
+        'NeoBrain',
+        'http://localhost:8000',
+        width=1200,
+        height=800,
+        resizable=True,
+        fullscreen=False,
+        min_size=(800, 600)
+    )
+    webview.start()
