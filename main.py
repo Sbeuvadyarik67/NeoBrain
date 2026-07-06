@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse
 import uvicorn
 
 # ============================================================
-# ОТКЛЮЧАЕМ ВЫВОД В КОНСОЛЬ (чтобы избежать ошибок кодировки)
+# ОТКЛЮЧАЕМ ВЫВОД В КОНСОЛЬ
 # ============================================================
 if sys.platform == "win32":
     try:
@@ -28,6 +28,56 @@ if sys.platform == "win32":
         sys.stderr = open(os.devnull, 'w')
 
 app = FastAPI()
+
+# ============================================================
+# СЛОВАРЬ СЛЕНГА (самообучающийся)
+# ============================================================
+SLANG_FILE = "slang_dict.json"
+PENDING_FILE = "pending_words.txt"
+LAST_RUN_FILE = "last_run.txt"
+
+def load_slang():
+    if os.path.exists(SLANG_FILE):
+        try:
+            with open(SLANG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_slang(slang):
+    with open(SLANG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(slang, f, indent=2, ensure_ascii=False)
+
+def add_pending_word(word):
+    with open(PENDING_FILE, 'a', encoding='utf-8') as f:
+        f.write(word.strip() + "\n")
+
+def get_pending_words():
+    if not os.path.exists(PENDING_FILE):
+        return []
+    with open(PENDING_FILE, 'r', encoding='utf-8') as f:
+        return [w.strip() for w in f.readlines() if w.strip()]
+
+def clear_pending():
+    if os.path.exists(PENDING_FILE):
+        os.remove(PENDING_FILE)
+
+def should_run_agent():
+    if not os.path.exists(LAST_RUN_FILE):
+        return True
+    try:
+        with open(LAST_RUN_FILE, 'r') as f:
+            last = float(f.read())
+        return (time.time() - last) > 2 * 60 * 60
+    except:
+        return True
+
+def update_last_run():
+    with open(LAST_RUN_FILE, 'w') as f:
+        f.write(str(time.time()))
+
+slang_dict = load_slang()
 
 # ============================================================
 # ФАЙЛЫ ДЛЯ ХРАНЕНИЯ
@@ -46,9 +96,6 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, indent=2, ensure_ascii=False)
 
-# ============================================================
-# ПРОВЕРКА OLLAMA
-# ============================================================
 def check_ollama():
     try:
         requests.get("http://localhost:11434/api/tags", timeout=3)
@@ -56,9 +103,6 @@ def check_ollama():
     except:
         return False
 
-# ============================================================
-# ПОЛУЧЕНИЕ ЛОКАЛЬНОГО IP
-# ============================================================
 def get_local_ip():
     try:
         hostname = socket.gethostname()
@@ -68,9 +112,6 @@ def get_local_ip():
 
 LOCAL_IP = get_local_ip()
 
-# ============================================================
-# НАСТРОЙКИ
-# ============================================================
 def load_config():
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -92,7 +133,7 @@ CONFIG = load_config()
 # ============================================================
 # AI ПРОВАЙДЕРЫ
 # ============================================================
-def ask_ollama(prompt, model):
+def ask_ollama(prompt, model, system_prompt=""):
     try:
         check = requests.get("http://localhost:11434/api/tags", timeout=3)
         if check.status_code != 200:
@@ -100,11 +141,15 @@ def ask_ollama(prompt, model):
     except:
         return {"error": "Ollama не запущена"}
 
+    full_prompt = prompt
+    if system_prompt:
+        full_prompt = f"{system_prompt}\n\nЗапрос пользователя: {prompt}"
+
     response = requests.post(
         "http://localhost:11434/api/generate",
         json={
             "model": model,
-            "prompt": prompt,
+            "prompt": full_prompt,
             "stream": False,
             "temperature": 0.7
         },
@@ -117,9 +162,14 @@ def ask_ollama(prompt, model):
     else:
         return {"error": f"Ошибка Ollama: {response.status_code}"}
 
-def ask_openai(prompt, api_key, model="gpt-3.5-turbo"):
+def ask_openai(prompt, api_key, model="gpt-3.5-turbo", system_prompt=""):
     if not api_key:
         return {"error": "API ключ OpenAI не указан"}
+    
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
     
     try:
         response = requests.post(
@@ -130,7 +180,7 @@ def ask_openai(prompt, api_key, model="gpt-3.5-turbo"):
             },
             json={
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
                 "temperature": 0.7
             },
             timeout=60
@@ -144,15 +194,19 @@ def ask_openai(prompt, api_key, model="gpt-3.5-turbo"):
     except Exception as e:
         return {"error": f"Ошибка OpenAI: {str(e)}"}
 
-def ask_gemini(prompt, api_key, model="gemini-pro"):
+def ask_gemini(prompt, api_key, model="gemini-pro", system_prompt=""):
     if not api_key:
         return {"error": "API ключ Google Gemini не указан"}
     
     try:
+        full_prompt = prompt
+        if system_prompt:
+            full_prompt = f"{system_prompt}\n\n{full_prompt}"
+            
         response = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
             json={
-                "contents": [{"parts": [{"text": prompt}]}]
+                "contents": [{"parts": [{"text": full_prompt}]}]
             },
             timeout=60
         )
@@ -165,11 +219,15 @@ def ask_gemini(prompt, api_key, model="gemini-pro"):
     except Exception as e:
         return {"error": f"Ошибка Gemini: {str(e)}"}
 
-def ask_claude(prompt, api_key, model="claude-3-haiku-20240307"):
+def ask_claude(prompt, api_key, model="claude-3-haiku-20240307", system_prompt=""):
     if not api_key:
         return {"error": "API ключ Anthropic Claude не указан"}
     
     try:
+        full_prompt = prompt
+        if system_prompt:
+            full_prompt = f"{system_prompt}\n\n{full_prompt}"
+            
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
@@ -180,7 +238,7 @@ def ask_claude(prompt, api_key, model="claude-3-haiku-20240307"):
             json={
                 "model": model,
                 "max_tokens": 1024,
-                "messages": [{"role": "user", "content": prompt}]
+                "messages": [{"role": "user", "content": full_prompt}]
             },
             timeout=60
         )
@@ -193,8 +251,28 @@ def ask_claude(prompt, api_key, model="claude-3-haiku-20240307"):
     except Exception as e:
         return {"error": f"Ошибка Claude: {str(e)}"}
 
+def process_pending_words():
+    pending = get_pending_words()
+    if not pending:
+        return
+    
+    print(f"🔄 Обработка {len(pending)} новых слов...")
+    
+    for word in pending:
+        try:
+            if word not in slang_dict:
+                slang_dict[word] = "Новое слово (ожидает проверки)"
+                print(f"  ➕ Добавлено: {word}")
+        except:
+            pass
+    
+    save_slang(slang_dict)
+    clear_pending()
+    update_last_run()
+    print("✅ Словарь обновлён")
+
 # ============================================================
-# HTML ТЕМПЛЕЙТ
+# HTML ТЕМПЛЕЙТ (ПОЛНЫЙ)
 # ============================================================
 html_template = """
 <!DOCTYPE html>
@@ -218,6 +296,9 @@ html_template = """
             transition: all 1.5s cubic-bezier(0.4, 0, 0.2, 1);
             background: #0a0e1a;
             color: #e8f0ff;
+            --radius: 12px;
+            --shadow: none;
+            --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
         }
 
         .container {
@@ -227,6 +308,79 @@ html_template = """
             z-index: 2;
         }
 
+        /* ======================================== */
+        /* СТИЛИ ИНТЕРФЕЙСА */
+        /* ======================================== */
+
+        /* Строгий минимализм */
+        body.style-minimal {
+            --radius: 4px;
+            --shadow: none;
+        }
+        body.style-minimal .btn { border-radius: 4px; }
+        body.style-minimal .header { border-bottom: 1px solid rgba(255,255,255,0.1); }
+        body.style-minimal .ai-section { border-radius: 4px; }
+        body.style-minimal #panel { border-radius: 4px; }
+
+        /* Вайбовый */
+        body.style-vibes {
+            --radius: 20px;
+            --shadow: 0 8px 40px rgba(0, 212, 255, 0.05);
+        }
+        body.style-vibes .btn { border-radius: 20px; box-shadow: 0 4px 20px rgba(0, 212, 255, 0.1); }
+        body.style-vibes .header { border-bottom: none; background: rgba(0, 212, 255, 0.02); border-radius: 20px; padding: 20px; }
+        body.style-vibes .ai-section { border-radius: 20px; background: rgba(255,255,255,0.03); }
+        body.style-vibes #panel { border-radius: 20px; background: rgba(0, 212, 255, 0.04); }
+
+        /* Кибер-стиль */
+        body.style-cyber {
+            --radius: 0px;
+            --shadow: none;
+        }
+        body.style-cyber .btn { border-radius: 0px; border: 1px solid #00d4ff; background: transparent; color: #00d4ff; }
+        body.style-cyber .btn-primary { background: #00d4ff; color: #000; }
+        body.style-cyber .header { border-bottom: 2px solid #00d4ff; }
+        body.style-cyber .ai-section { border-radius: 0px; border: 1px solid rgba(0, 212, 255, 0.2); }
+        body.style-cyber #panel { border-radius: 0px; border: 1px solid rgba(0, 212, 255, 0.1); }
+        body.style-cyber * { font-family: 'Courier New', monospace !important; }
+
+        /* ======================================== */
+        /* ВЫБОР СТИЛЯ */
+        /* ======================================== */
+        #styleSelector {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.92);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 20px;
+        }
+        #styleSelector.active { display: flex; }
+        .style-btn {
+            padding: 20px 40px;
+            border-radius: 16px;
+            border: 2px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.03);
+            color: #d4e8ff;
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.3s ease;
+        }
+        .style-btn:hover {
+            background: rgba(0, 212, 255, 0.1);
+            border-color: #00d4ff;
+            transform: scale(1.02);
+        }
+
+        /* ======================================== */
+        /* ОБЩИЕ ЭЛЕМЕНТЫ */
+        /* ======================================== */
         .header {
             display: flex;
             align-items: center;
@@ -259,7 +413,7 @@ html_template = """
         .btn {
             padding: 8px 20px;
             border: none;
-            border-radius: 12px;
+            border-radius: var(--radius, 12px);
             font-weight: 600;
             font-size: 14px;
             cursor: pointer;
@@ -268,6 +422,7 @@ html_template = """
             gap: 8px;
             transition: all 0.3s ease;
             backdrop-filter: blur(4px);
+            box-shadow: var(--shadow, none);
         }
 
         .btn:hover {
@@ -316,7 +471,7 @@ html_template = """
             display: none;
             padding: 24px;
             margin-bottom: 24px;
-            border-radius: 16px;
+            border-radius: var(--radius, 16px);
             border: 1px solid rgba(255, 255, 255, 0.06);
             backdrop-filter: blur(8px);
             background: rgba(0, 212, 255, 0.02);
@@ -362,7 +517,7 @@ html_template = """
             flex: 1;
             min-width: 120px;
             padding: 10px 16px;
-            border-radius: 12px;
+            border-radius: var(--radius, 12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
             font-size: 14px;
             background: rgba(255, 255, 255, 0.04);
@@ -379,6 +534,68 @@ html_template = """
         .panel-row select option {
             background: #1a1a2e;
             color: #eef5ff;
+        }
+
+        /* Переключатель "В тренде" */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        .switch input { display: none; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0;
+            right: 0; bottom: 0;
+            background: #444;
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: white;
+            transition: 0.3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background: #00d4ff;
+        }
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        /* Ползунок кринжометра (увеличенный) */
+        #cringeSlider {
+            width: 200px;
+            height: 8px;
+            accent-color: #ff44ff;
+            background: linear-gradient(to right, #00d4ff, #ff44ff, #ff0000);
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        #cringeSlider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 24px;
+            height: 24px;
+            background: radial-gradient(circle, #ff44ff, #aa00ff);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(255, 68, 255, 0.5);
+        }
+        #cringeSlider::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            background: radial-gradient(circle, #ff44ff, #aa00ff);
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
         }
 
         #charList {
@@ -455,11 +672,14 @@ html_template = """
         }
 
         .ai-section {
+            display: flex;
+            flex-direction: column;
             padding: 24px;
-            border-radius: 16px;
+            border-radius: var(--radius, 16px);
             border: 1px solid rgba(255, 255, 255, 0.06);
             backdrop-filter: blur(8px);
             background: rgba(255, 255, 255, 0.02);
+            min-height: 500px;
         }
 
         .ai-section h3 {
@@ -479,7 +699,7 @@ html_template = """
             margin-bottom: 16px;
             font-size: 14px;
             padding: 12px 16px;
-            border-radius: 12px;
+            border-radius: var(--radius, 12px);
             background: rgba(255, 255, 255, 0.02);
         }
 
@@ -497,41 +717,17 @@ html_template = """
             font-weight: 600;
         }
 
-        .ai-input-group {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-        }
-
-        .ai-input-group input {
-            flex: 1;
-            min-width: 180px;
-            padding: 10px 16px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            font-size: 14px;
-            background: rgba(255, 255, 255, 0.04);
-            color: #d4e8ff;
-            outline: none;
-            transition: all 0.3s ease;
-        }
-
-        .ai-input-group input:focus {
-            border-color: #00d4ff;
-            box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.08);
-        }
-
-        .ai-input-group input::placeholder {
-            opacity: 0.4;
-        }
-
+        /* ======================================== */
+        /* ЧАТ + ПОЛЕ ВВОДА (ПОЛЕ ВВОДА ВНИЗУ) */
+        /* ======================================== */
         #chatContainer {
-            margin-top: 16px;
+            flex: 1;
             max-height: 400px;
             overflow-y: auto;
             padding: 12px;
-            border-radius: 12px;
+            border-radius: var(--radius, 12px);
             background: rgba(255, 255, 255, 0.02);
+            margin-bottom: 12px;
         }
 
         #chatContainer::-webkit-scrollbar {
@@ -545,7 +741,7 @@ html_template = """
         .chat-message {
             padding: 10px 16px;
             margin-bottom: 8px;
-            border-radius: 12px;
+            border-radius: var(--radius, 12px);
             max-width: 85%;
             word-break: break-word;
         }
@@ -567,6 +763,35 @@ html_template = """
             font-size: 12px;
             opacity: 0.5;
             margin-bottom: 4px;
+        }
+
+        .ai-input-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: auto;
+        }
+
+        .ai-input-group input {
+            flex: 1;
+            min-width: 180px;
+            padding: 10px 16px;
+            border-radius: var(--radius, 12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            font-size: 14px;
+            background: rgba(255, 255, 255, 0.04);
+            color: #d4e8ff;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .ai-input-group input:focus {
+            border-color: #00d4ff;
+            box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.08);
+        }
+
+        .ai-input-group input::placeholder {
+            opacity: 0.4;
         }
 
         #aiOutput {
@@ -677,6 +902,9 @@ html_template = """
             background: rgba(255, 255, 255, 0.08);
         }
 
+        /* ======================================== */
+        /* ТЕМЫ (15 старых + 5 новых) */
+        /* ======================================== */
         body.theme-neon { background: #0a0e1a; color: #d4e8ff; }
         body.theme-neon .btn-primary { background: #00d4ff; color: #0a0e1a; }
         body.theme-neon select:focus, body.theme-neon input:focus { border-color: #00d4ff; box-shadow: 0 0 0 4px rgba(0, 212, 255, 0.15); }
@@ -782,6 +1010,42 @@ html_template = """
         body.theme-wine .ai-section { background: rgba(238, 51, 85, 0.02); border-color: rgba(238, 51, 85, 0.06); }
         body.theme-wine .header { border-bottom-color: rgba(238, 51, 85, 0.08); }
 
+        /* ===== НОВЫЕ ТЕМЫ ===== */
+        body.theme-moon { background: #1a1a2a; color: #c8d0e0; }
+        body.theme-moon .btn-primary { background: #8888cc; color: #1a1a2a; }
+        body.theme-moon select:focus, body.theme-moon input:focus { border-color: #8888cc; box-shadow: 0 0 0 4px rgba(136, 136, 204, 0.15); }
+        body.theme-moon #panel { background: rgba(136, 136, 204, 0.04); border-color: rgba(136, 136, 204, 0.08); }
+        body.theme-moon .ai-section { background: rgba(136, 136, 204, 0.02); border-color: rgba(136, 136, 204, 0.06); }
+        body.theme-moon .header { border-bottom-color: rgba(136, 136, 204, 0.08); }
+
+        body.theme-hightech { background: #0a0a1a; color: #88ddff; }
+        body.theme-hightech .btn-primary { background: #44aaff; color: #0a0a1a; }
+        body.theme-hightech select:focus, body.theme-hightech input:focus { border-color: #44aaff; box-shadow: 0 0 0 4px rgba(68, 170, 255, 0.15); }
+        body.theme-hightech #panel { background: rgba(68, 170, 255, 0.04); border-color: rgba(68, 170, 255, 0.08); }
+        body.theme-hightech .ai-section { background: rgba(68, 170, 255, 0.02); border-color: rgba(68, 170, 255, 0.06); }
+        body.theme-hightech .header { border-bottom-color: rgba(68, 170, 255, 0.08); }
+
+        body.theme-nature { background: #0a1a0a; color: #88dd88; }
+        body.theme-nature .btn-primary { background: #44bb44; color: #0a1a0a; }
+        body.theme-nature select:focus, body.theme-nature input:focus { border-color: #44bb44; box-shadow: 0 0 0 4px rgba(68, 187, 68, 0.15); }
+        body.theme-nature #panel { background: rgba(68, 187, 68, 0.04); border-color: rgba(68, 187, 68, 0.08); }
+        body.theme-nature .ai-section { background: rgba(68, 187, 68, 0.02); border-color: rgba(68, 187, 68, 0.06); }
+        body.theme-nature .header { border-bottom-color: rgba(68, 187, 68, 0.08); }
+
+        body.theme-noir { background: #0a0a0a; color: #ddccaa; }
+        body.theme-noir .btn-primary { background: #ccaa44; color: #0a0a0a; }
+        body.theme-noir select:focus, body.theme-noir input:focus { border-color: #ccaa44; box-shadow: 0 0 0 4px rgba(204, 170, 68, 0.15); }
+        body.theme-noir #panel { background: rgba(204, 170, 68, 0.04); border-color: rgba(204, 170, 68, 0.08); }
+        body.theme-noir .ai-section { background: rgba(204, 170, 68, 0.02); border-color: rgba(204, 170, 68, 0.06); }
+        body.theme-noir .header { border-bottom-color: rgba(204, 170, 68, 0.08); }
+
+        body.theme-chaos { background: #1a0a1a; color: #ff88ff; }
+        body.theme-chaos .btn-primary { background: #ff44ff; color: #1a0a1a; }
+        body.theme-chaos select:focus, body.theme-chaos input:focus { border-color: #ff44ff; box-shadow: 0 0 0 4px rgba(255, 68, 255, 0.15); }
+        body.theme-chaos #panel { background: rgba(255, 68, 255, 0.04); border-color: rgba(255, 68, 255, 0.08); }
+        body.theme-chaos .ai-section { background: rgba(255, 68, 255, 0.02); border-color: rgba(255, 68, 255, 0.06); }
+        body.theme-chaos .header { border-bottom-color: rgba(255, 68, 255, 0.08); }
+
         @media (max-width: 600px) {
             body { padding: 14px; }
             .header h1 { font-size: 20px; }
@@ -792,10 +1056,25 @@ html_template = """
             .panel-grid { grid-template-columns: 1fr; }
             .modal { padding: 24px; }
             .chat-message { max-width: 95%; }
+            #cringeSlider { width: 120px; }
+            .ai-section { min-height: 400px; }
         }
     </style>
 </head>
-<body class="theme-neon">
+<body>
+    <!-- ======================================== -->
+    <!-- ВЫБОР СТИЛЯ ИНТЕРФЕЙСА -->
+    <!-- ======================================== -->
+    <div id="styleSelector" class="active">
+        <h2 style="color: #e0f0ff; font-size: 28px;">🎨 Выберите стиль интерфейса</h2>
+        <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;">
+            <button class="style-btn" data-style="minimal">⬜ Строгий минимализм</button>
+            <button class="style-btn" data-style="vibes">✨ Вайбовый</button>
+            <button class="style-btn" data-style="cyber">⚡ Кибер-стиль</button>
+        </div>
+        <p style="color: #6688aa; font-size: 14px; margin-top: 10px;">Выбор сохраняется в настройках</p>
+    </div>
+
     <div class="container">
         <header class="header">
             <h1>NeoBrain</h1>
@@ -851,23 +1130,41 @@ html_template = """
                     <div class="panel-row">
                         <span style="opacity:0.5; font-size:13px;">🎨</span>
                         <select id="themeSelect">
-                            <option value="neon">Неон</option>
-                            <option value="cyber">Киберпанк</option>
-                            <option value="matrix">Матрица</option>
-                            <option value="ocean">Океан</option>
-                            <option value="sunset">Закат</option>
-                            <option value="forest">Лес</option>
-                            <option value="cosmos">Космос</option>
-                            <option value="lava">Лава</option>
-                            <option value="gold">Золото</option>
-                            <option value="purple">Пурпур</option>
-                            <option value="cherry">Вишня</option>
-                            <option value="emerald">Изумруд</option>
-                            <option value="sunny">Солнечная</option>
-                            <option value="ice">Лёд</option>
-                            <option value="wine">Вино</option>
+                            <option value="neon">💠 Неон</option>
+                            <option value="cyber">🌀 Киберпанк</option>
+                            <option value="matrix">💚 Матрица</option>
+                            <option value="ocean">🌊 Океан</option>
+                            <option value="sunset">🌅 Закат</option>
+                            <option value="forest">🌳 Лес</option>
+                            <option value="cosmos">🌠 Космос</option>
+                            <option value="lava">🌋 Лава</option>
+                            <option value="gold">✨ Золото</option>
+                            <option value="purple">🟣 Пурпур</option>
+                            <option value="cherry">🌸 Вишня</option>
+                            <option value="emerald">💎 Изумруд</option>
+                            <option value="sunny">☀️ Солнечная</option>
+                            <option value="ice">❄️ Лёд</option>
+                            <option value="wine">🍷 Вино</option>
+                            <option value="moon">🌙 Лунная</option>
+                            <option value="hightech">🧊 Хай-тек</option>
+                            <option value="nature">🌿 Природа</option>
+                            <option value="noir">🕶️ Нуар</option>
+                            <option value="chaos">🌀 Хаос</option>
                         </select>
                         <span class="badge" id="themeStatus">✅</span>
+                    </div>
+                    <!-- ======================================== -->
+                    <!-- КРИНЖОМЕТР И В ТРЕНДЕ -->
+                    <!-- ======================================== -->
+                    <div class="panel-row">
+                        <span style="opacity:0.5; font-size:13px;">🔥 В тренде</span>
+                        <label class="switch">
+                            <input type="checkbox" id="trendyToggle">
+                            <span class="slider round"></span>
+                        </label>
+                        <span style="opacity:0.5; font-size:13px; margin-left:20px;">🎚️ Кринжометр</span>
+                        <input type="range" id="cringeSlider" min="0" max="10" value="0">
+                        <span id="cringeLabel" style="font-size:14px; min-width:30px;">0</span>
                     </div>
                 </div>
             </div>
@@ -879,11 +1176,11 @@ html_template = """
                 <span><span class="label">Провайдер:</span> <span id="providerDisplay">Ollama</span></span>
                 <span><span class="label">Модель:</span> <span id="modelDisplay">qwen2.5-coder:1.5b</span></span>
             </div>
+            <div id="chatContainer"></div>
             <div class="ai-input-group">
                 <input type="text" id="aiInput" placeholder="Напиши что-нибудь...">
                 <button class="btn btn-primary" id="aiSendBtn">Отправить</button>
             </div>
-            <div id="chatContainer"></div>
             <div id="aiOutput"></div>
         </div>
 
@@ -907,9 +1204,31 @@ html_template = """
     </div>
 
     <script>
-        // ============================================================
+        // ========================================
+        // ВЫБОР СТИЛЯ ИНТЕРФЕЙСА
+        // ========================================
+        const styleSelector = document.getElementById('styleSelector');
+        const savedStyle = localStorage.getItem('neobrain_style');
+
+        if (!savedStyle) {
+            styleSelector.classList.add('active');
+        } else {
+            document.body.classList.add('style-' + savedStyle);
+            styleSelector.classList.remove('active');
+        }
+
+        document.querySelectorAll('.style-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const style = this.dataset.style;
+                localStorage.setItem('neobrain_style', style);
+                document.body.classList.add('style-' + style);
+                styleSelector.classList.remove('active');
+            });
+        });
+
+        // ========================================
         // 1. ПАНЕЛЬ
-        // ============================================================
+        // ========================================
         var toggleBtn = document.getElementById('toggleBtn');
         var panel = document.getElementById('panel');
         var panelOpen = false;
@@ -921,55 +1240,35 @@ html_template = """
             });
         }
 
-        // ============================================================
-        // 2. ЧАТ (ИСТОРИЯ)
-        // ============================================================
-        var chatContainer = document.getElementById('chatContainer');
-        var historyLoaded = false;
+        // ========================================
+        // 2. КРИНЖОМЕТР И В ТРЕНДЕ
+        // ========================================
+        const trendyToggle = document.getElementById('trendyToggle');
+        const cringeSlider = document.getElementById('cringeSlider');
+        const cringeLabel = document.getElementById('cringeLabel');
 
-        function addMessageToChat(role, content) {
-            var div = document.createElement('div');
-            div.className = 'chat-message ' + role;
-            var roleLabel = role === 'user' ? '👤 Вы' : '🧠 AI';
-            div.innerHTML = '<div class="role">' + roleLabel + '</div>' + content;
-            chatContainer.appendChild(div);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-            
-            // Сохраняем историю
-            if (historyLoaded) {
-                saveMessageToHistory(role, content);
-            }
+        if (localStorage.getItem('trendy_mode') === 'true') {
+            trendyToggle.checked = true;
+        }
+        const savedCringe = localStorage.getItem('cringe_level');
+        if (savedCringe !== null) {
+            cringeSlider.value = savedCringe;
+            cringeLabel.textContent = savedCringe;
         }
 
-        function saveMessageToHistory(role, content) {
-            var history = JSON.parse(localStorage.getItem('chat_history') || '[]');
-            history.push({ role: role, content: content, timestamp: Date.now() });
-            // Ограничиваем историю 100 сообщениями
-            if (history.length > 100) {
-                history = history.slice(-100);
-            }
-            localStorage.setItem('chat_history', JSON.stringify(history));
-        }
+        trendyToggle.addEventListener('change', function() {
+            localStorage.setItem('trendy_mode', this.checked);
+        });
 
-        function loadHistoryFromLocal() {
-            var history = JSON.parse(localStorage.getItem('chat_history') || '[]');
-            if (history.length > 0) {
-                chatContainer.innerHTML = '';
-                history.forEach(function(msg) {
-                    var div = document.createElement('div');
-                    div.className = 'chat-message ' + msg.role;
-                    var roleLabel = msg.role === 'user' ? '👤 Вы' : '🧠 AI';
-                    div.innerHTML = '<div class="role">' + roleLabel + '</div>' + msg.content;
-                    chatContainer.appendChild(div);
-                });
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-            }
-            historyLoaded = true;
-        }
+        cringeSlider.addEventListener('input', function() {
+            const val = this.value;
+            cringeLabel.textContent = val;
+            localStorage.setItem('cringe_level', val);
+        });
 
-        // ============================================================
+        // ========================================
         // 3. ПОДЕЛИТЬСЯ
-        // ============================================================
+        // ========================================
         function openShareModal() {
             document.getElementById('shareModal').classList.add('active');
             document.body.style.overflow = 'hidden';
@@ -1008,9 +1307,53 @@ html_template = """
             if (e.key === 'Escape') closeShareModal();
         });
 
-        // ============================================================
-        // 4. ПРОВАЙДЕР И МОДЕЛЬ
-        // ============================================================
+        // ========================================
+        // 4. ЧАТ
+        // ========================================
+        var chatContainer = document.getElementById('chatContainer');
+        var historyLoaded = false;
+
+        function addMessageToChat(role, content) {
+            var div = document.createElement('div');
+            div.className = 'chat-message ' + role;
+            var roleLabel = role === 'user' ? '👤 Вы' : '🧠 AI';
+            div.innerHTML = '<div class="role">' + roleLabel + '</div>' + content;
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            
+            if (historyLoaded) {
+                saveMessageToHistory(role, content);
+            }
+        }
+
+        function saveMessageToHistory(role, content) {
+            var history = JSON.parse(localStorage.getItem('chat_history') || '[]');
+            history.push({ role: role, content: content, timestamp: Date.now() });
+            if (history.length > 100) {
+                history = history.slice(-100);
+            }
+            localStorage.setItem('chat_history', JSON.stringify(history));
+        }
+
+        function loadHistoryFromLocal() {
+            var history = JSON.parse(localStorage.getItem('chat_history') || '[]');
+            if (history.length > 0) {
+                chatContainer.innerHTML = '';
+                history.forEach(function(msg) {
+                    var div = document.createElement('div');
+                    div.className = 'chat-message ' + msg.role;
+                    var roleLabel = msg.role === 'user' ? '👤 Вы' : '🧠 AI';
+                    div.innerHTML = '<div class="role">' + roleLabel + '</div>' + msg.content;
+                    chatContainer.appendChild(div);
+                });
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+            historyLoaded = true;
+        }
+
+        // ========================================
+        // 5. ПРОВАЙДЕР И МОДЕЛЬ
+        // ========================================
         var currentProvider = 'ollama';
         var currentModel = 'qwen2.5-coder:1.5b';
 
@@ -1115,9 +1458,9 @@ html_template = """
             });
         }
 
-        // ============================================================
-        // 5. ТЕМЫ
-        // ============================================================
+        // ========================================
+        // 6. ТЕМЫ
+        // ========================================
         var themeSelect = document.getElementById('themeSelect');
         var themeStatus = document.getElementById('themeStatus');
         var body = document.body;
@@ -1150,9 +1493,9 @@ html_template = """
             });
         }
 
-        // ============================================================
-        // 6. ПЕРСОНАЖИ
-        // ============================================================
+        // ========================================
+        // 7. ПЕРСОНАЖИ
+        // ========================================
         var characters = [];
         var STORAGE_CHARS = 'ai_chat_characters';
 
@@ -1414,9 +1757,9 @@ html_template = """
             importCharsBtn.addEventListener('click', importCharacters);
         }
 
-        // ============================================================
-        // 7. ОТПРАВКА СООБЩЕНИЯ В AI
-        // ============================================================
+        // ========================================
+        // 8. ОТПРАВКА СООБЩЕНИЯ
+        // ========================================
         var aiSendBtn = document.getElementById('aiSendBtn');
         if (aiSendBtn) {
             aiSendBtn.addEventListener('click', function() {
@@ -1428,12 +1771,12 @@ html_template = """
 
                 var provider = currentProvider;
                 var model = currentModel;
+                var trendyMode = trendyToggle.checked;
+                var cringeLevel = parseInt(cringeSlider.value);
 
-                // Показываем сообщение пользователя сразу
                 addMessageToChat('user', text);
                 input.value = '';
 
-                // Показываем статус "печатает"
                 var thinkingDiv = document.createElement('div');
                 thinkingDiv.className = 'chat-message ai';
                 thinkingDiv.id = 'thinkingMessage';
@@ -1462,7 +1805,9 @@ html_template = """
                         prompt: text,
                         provider: provider,
                         model: model,
-                        api_key: apiKey || ''
+                        api_key: apiKey || '',
+                        trendy_mode: trendyMode,
+                        cringe_level: cringeLevel
                     })
                 })
                 .then(function(response) {
@@ -1502,9 +1847,9 @@ html_template = """
             });
         }
 
-        // ============================================================
-        // 8. ИНИЦИАЛИЗАЦИЯ
-        // ============================================================
+        // ========================================
+        // 9. ИНИЦИАЛИЗАЦИЯ
+        // ========================================
         document.addEventListener('DOMContentLoaded', function() {
             var savedProvider = localStorage.getItem('neobrain_provider');
             if (savedProvider && providerSelect) {
@@ -1550,17 +1895,49 @@ async def ask(request: Request):
         provider = data.get("provider", "ollama")
         model = data.get("model", "qwen2.5-coder:1.5b")
         api_key = data.get("api_key", "")
+        trendy_mode = data.get('trendy_mode', False)
+        cringe_level = data.get('cringe_level', 0)
+
+        system_prompt = "Ты — полезный и дружелюбный AI-помощник."
+
+        if trendy_mode:
+            slang_context = ""
+            if slang_dict:
+                slang_items = list(slang_dict.items())[:30]
+                slang_text = "\n".join([f"- {word}: {meaning}" for word, meaning in slang_items])
+                slang_context = f"\n\nАктуальный молодёжный сленг (используй эти слова, если они уместны):\n{slang_text}"
+            system_prompt += f" Используй актуальный молодёжный сленг в разговоре.{slang_context}"
+
+        if cringe_level == 0:
+            system_prompt += " Отвечай максимально сухо, серьёзно и по делу. Без шуток, без эмодзи, без сленга."
+        elif cringe_level <= 3:
+            system_prompt += " Отвечай вежливо и дружелюбно, иногда с лёгким юмором."
+        elif cringe_level <= 6:
+            system_prompt += " Отвечай в разговорном стиле, добавляй немного юмора и иногда используй эмодзи."
+        elif cringe_level <= 8:
+            system_prompt += " Отвечай с юмором, используй сленг, иногда шути, добавляй эмодзи."
+        else:
+            system_prompt += " Отвечай максимально кринжово и нелепо! Используй зумерский сленг, капс, много эмодзи, гиперболы. Будь максимально смешным и несерьёзным."
+
+        for word in prompt.split():
+            word_clean = word.strip('.,!?;:')
+            if word_clean and len(word_clean) > 1 and word_clean.lower() not in slang_dict:
+                add_pending_word(word_clean)
+
+        if should_run_agent():
+            threading.Thread(target=process_pending_words, daemon=True).start()
 
         if provider == "ollama":
-            return ask_ollama(prompt, model)
+            return ask_ollama(prompt, model, system_prompt)
         elif provider == "openai":
-            return ask_openai(prompt, api_key, model)
+            return ask_openai(prompt, api_key, model, system_prompt)
         elif provider == "gemini":
-            return ask_gemini(prompt, api_key, model)
+            return ask_gemini(prompt, api_key, model, system_prompt)
         elif provider == "claude":
-            return ask_claude(prompt, api_key, model)
+            return ask_claude(prompt, api_key, model, system_prompt)
         else:
             return {"error": f"Неизвестный провайдер: {provider}"}
+
     except Exception as e:
         return {"error": f"Ошибка: {str(e)}"}
 
