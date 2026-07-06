@@ -8,6 +8,7 @@ import socket
 import time
 import threading
 import webbrowser
+import subprocess
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 import uvicorn
@@ -96,13 +97,6 @@ def save_history(history):
     with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, indent=2, ensure_ascii=False)
 
-def check_ollama():
-    try:
-        requests.get("http://localhost:11434/api/tags", timeout=3)
-        return True
-    except:
-        return False
-
 def get_local_ip():
     try:
         hostname = socket.gethostname()
@@ -129,6 +123,30 @@ def save_config(config):
         json.dump(config, f, indent=2, ensure_ascii=False)
 
 CONFIG = load_config()
+
+# ============================================================
+# АВТОЗАПУСК OLLAMA
+# ============================================================
+def is_ollama_running():
+    try:
+        requests.get("http://localhost:11434/api/tags", timeout=2)
+        return True
+    except:
+        return False
+
+def start_ollama():
+    print("🔄 Запуск Ollama...")
+    try:
+        subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(3)
+        return True
+    except FileNotFoundError:
+        print("❌ Ollama не найдена в системе!")
+        print("📥 Скачайте: https://ollama.com")
+        return False
+    except Exception as e:
+        print(f"❌ Ошибка при запуске Ollama: {e}")
+        return False
 
 # ============================================================
 # AI ПРОВАЙДЕРЫ
@@ -571,31 +589,57 @@ html_template = """
             transform: translateX(20px);
         }
 
-        /* Ползунок кринжометра (увеличенный) */
+        /* ======================================== */
+        /* КРИНЖОМЕТР — БЕЗ ШКАЛЫ, ТОЛЬКО ЦИФРА */
+        /* ======================================== */
         #cringeSlider {
-            width: 200px;
+            flex: 1;
             height: 8px;
-            accent-color: #ff44ff;
+            -webkit-appearance: none;
+            appearance: none;
             background: linear-gradient(to right, #00d4ff, #ff44ff, #ff0000);
             border-radius: 10px;
-            cursor: pointer;
+            outline: none;
+            margin: 0;
+            padding: 0;
+            margin-right: 12px;
         }
+
         #cringeSlider::-webkit-slider-thumb {
             -webkit-appearance: none;
+            appearance: none;
             width: 24px;
             height: 24px;
-            background: radial-gradient(circle, #ff44ff, #aa00ff);
+            background: radial-gradient(circle, #ffffff, #ff44ff);
             border-radius: 50%;
             cursor: pointer;
-            box-shadow: 0 0 20px rgba(255, 68, 255, 0.5);
+            box-shadow: 0 0 20px rgba(255, 68, 255, 0.6);
+            border: 2px solid #00d4ff;
+            margin-top: -8px;
         }
+
         #cringeSlider::-moz-range-thumb {
             width: 24px;
             height: 24px;
-            background: radial-gradient(circle, #ff44ff, #aa00ff);
+            background: radial-gradient(circle, #ffffff, #ff44ff);
             border-radius: 50%;
             cursor: pointer;
-            border: none;
+            border: 2px solid #00d4ff;
+            box-shadow: 0 0 20px rgba(255, 68, 255, 0.6);
+        }
+
+        #cringeSlider::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 8px;
+            background: transparent;
+            border-radius: 10px;
+        }
+
+        #cringeSlider::-moz-range-track {
+            width: 100%;
+            height: 8px;
+            background: transparent;
+            border-radius: 10px;
         }
 
         #charList {
@@ -1154,17 +1198,19 @@ html_template = """
                         <span class="badge" id="themeStatus">✅</span>
                     </div>
                     <!-- ======================================== -->
-                    <!-- КРИНЖОМЕТР И В ТРЕНДЕ -->
+                    <!-- КРИНЖОМЕТР (1–10) — БЕЗ ШКАЛЫ -->
                     <!-- ======================================== -->
-                    <div class="panel-row">
+                    <div class="panel-row" style="flex-wrap: wrap;">
                         <span style="opacity:0.5; font-size:13px;">🔥 В тренде</span>
                         <label class="switch">
                             <input type="checkbox" id="trendyToggle">
                             <span class="slider round"></span>
                         </label>
                         <span style="opacity:0.5; font-size:13px; margin-left:20px;">🎚️ Кринжометр</span>
-                        <input type="range" id="cringeSlider" min="0" max="10" value="0">
-                        <span id="cringeLabel" style="font-size:14px; min-width:30px;">0</span>
+                        <div style="display: flex; align-items: center; flex: 1; min-width: 180px;">
+                            <input type="range" id="cringeSlider" min="1" max="10" value="5" step="1">
+                            <span id="cringeLabel" style="font-size:16px; font-weight:700; min-width:30px; text-align:center; color:#ff44ff;">5</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1484,7 +1530,7 @@ html_template = """
                 if (found) {
                     themeSelect.value = savedTheme;
                     body.className = 'theme-' + savedTheme;
-                    if (themeStatus) themeStatus.textContent = '✅ ' + savedTheme;
+                    if (themeStatus) (themeStatus.textContent = '✅ ' + savedTheme);
                 }
             }
 
@@ -1908,7 +1954,7 @@ async def ask(request: Request):
                 slang_context = f"\n\nАктуальный молодёжный сленг (используй эти слова, если они уместны):\n{slang_text}"
             system_prompt += f" Используй актуальный молодёжный сленг в разговоре.{slang_context}"
 
-        if cringe_level == 0:
+        if cringe_level == 1:
             system_prompt += " Отвечай максимально сухо, серьёзно и по делу. Без шуток, без эмодзи, без сленга."
         elif cringe_level <= 3:
             system_prompt += " Отвечай вежливо и дружелюбно, иногда с лёгким юмором."
@@ -1916,7 +1962,7 @@ async def ask(request: Request):
             system_prompt += " Отвечай в разговорном стиле, добавляй немного юмора и иногда используй эмодзи."
         elif cringe_level <= 8:
             system_prompt += " Отвечай с юмором, используй сленг, иногда шути, добавляй эмодзи."
-        else:
+        else:  # 9-10
             system_prompt += " Отвечай максимально кринжово и нелепо! Используй зумерский сленг, капс, много эмодзи, гиперболы. Будь максимально смешным и несерьёзным."
 
         for word in prompt.split():
@@ -1948,18 +1994,23 @@ if __name__ == "__main__":
     try:
         import webview
     except ImportError:
-        print("Установи pywebview: python -m pip install pywebview")
+        print("❌ Установи pywebview: python -m pip install pywebview")
         sys.exit(1)
 
-    if not check_ollama():
-        print("\n" + "=" * 55)
-        print("Ollama не обнаружена!")
-        print("Для работы с локальными моделями установите Ollama.")
-        print("Скачайте: https://ollama.com")
-        print("Или используйте облачные провайдеры в настройках.")
-        print("=" * 55)
-        print("\nЗапуск NeoBrain без Ollama... (доступны только облачные AI)")
+    # ========================================
+    # АВТОЗАПУСК OLLAMA
+    # ========================================
+    if not is_ollama_running():
+        print("⚠️  Ollama не запущена. Пытаемся запустить...")
+        if not start_ollama():
+            print("⚠️  Не удалось запустить Ollama. Локальные модели не будут работать.")
+            print("   Используйте облачные провайдеры в настройках.")
+        else:
+            print("✅ Ollama успешно запущена!")
+    else:
+        print("✅ Ollama уже запущена")
 
+    # Запускаем сервер
     def run_server():
         uvicorn.run(app, host="0.0.0.0", port=8000)
 
@@ -1969,14 +2020,14 @@ if __name__ == "__main__":
     time.sleep(2)
 
     print("\n" + "=" * 55)
-    print("NeoBrain запущен!")
-    print("Открывается окно приложения...")
-    print(f"Локальный адрес: http://{LOCAL_IP}:8000")
-    print("Закрой окно приложения для остановки")
+    print("🧠 NeoBrain запущен!")
+    print("📌 Открывается окно приложения...")
+    print(f"🌐 Локальный адрес: http://{LOCAL_IP}:8000")
+    print("⏹️  Закрой окно приложения для остановки")
     print("=" * 55 + "\n")
 
     webview.create_window(
-        'NeoBrain',
+        '🧠 NeoBrain',
         'http://localhost:8000',
         width=1200,
         height=800,
