@@ -1,3 +1,5 @@
-fastapi
-uvicorn
-requests
+fastapi==0.115.0
+uvicorn==0.30.0
+requests==2.32.0
+pywebview==4.2.2
+python-multipart==0.0.9
