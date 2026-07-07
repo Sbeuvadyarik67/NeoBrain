@@ -2,4 +2,8 @@ fastapi==0.115.0
 uvicorn==0.30.0
 requests==2.32.0
 pywebview==4.2.2
+<<<<<<< HEAD
 python-multipart==0.0.9
+=======
+python-multipart==0.0.9
+>>>>>>> 8e0b1fd (docs: обновлены README, requirements.txt, добавлен пример конфига, neobrain_config.json удалён из репозитория)

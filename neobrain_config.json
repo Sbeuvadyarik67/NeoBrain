@@ -1,8 +1,0 @@
-{
-    "api_keys": {
-        "openai": "",
-        "gemini": "",
-        "claude": ""
-    },
-    "default_provider": "ollama"
-}
