@@ -15,6 +15,16 @@ from fastapi.responses import HTMLResponse
 import uvicorn
 
 # ============================================================
+# НАСТРОЙКА КОДИРОВКИ ДЛЯ WINDOWS
+# ============================================================
+if sys.platform == "win32":
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='ignore')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='ignore')
+    except:
+        pass
+
+# ============================================================
 # ОТКЛЮЧАЕМ ВЫВОД В КОНСОЛЬ (НО ЛОГИ СОХРАНЯЕМ)
 # ============================================================
 if sys.platform == "win32":
@@ -291,7 +301,7 @@ def process_pending_words():
     print("✅ Словарь обновлён")
 
 # ============================================================
-# HTML ТЕМПЛЕЙТ С ЛОКАЛИЗАЦИЕЙ (RAW STRING)
+# HTML ТЕМПЛЕЙТ С ЛОКАЛИЗАЦИЕЙ И КОПИРОВАНИЕМ
 # ============================================================
 html_template = r"""
 <!DOCTYPE html>
@@ -512,6 +522,90 @@ html_template = r"""
         body.theme-chaos #panel { background: rgba(255,68,255,0.04); border-color: rgba(255,68,255,0.08); }
         body.theme-chaos .ai-section { background: rgba(255,68,255,0.02); border-color: rgba(255,68,255,0.06); }
         body.theme-chaos .header { border-bottom-color: rgba(255,68,255,0.08); }
+
+        /* ===== КОПИРОВАНИЕ СООБЩЕНИЙ ===== */
+        .chat-message-wrapper {
+            position: relative;
+            max-width: 85%;
+            margin-bottom: 8px;
+        }
+
+        .chat-message-wrapper.user {
+            margin-left: auto;
+        }
+
+        .chat-message-wrapper.ai {
+            margin-right: auto;
+        }
+
+        .chat-message-wrapper .chat-message {
+            margin-bottom: 0;
+            max-width: 100%;
+            position: relative;
+            padding-right: 40px;
+            cursor: text;
+            user-select: text;
+        }
+
+        .chat-message-wrapper .chat-message .role {
+            user-select: none;
+        }
+
+        .chat-message-wrapper .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(255,255,255,0.05);
+            border: none;
+            border-radius: 6px;
+            color: #8888aa;
+            padding: 4px 8px;
+            font-size: 12px;
+            cursor: pointer;
+            opacity: 0;
+            transition: all 0.2s ease;
+        }
+
+        .chat-message-wrapper:hover .copy-btn {
+            opacity: 0.6;
+        }
+
+        .chat-message-wrapper .copy-btn:hover {
+            opacity: 1;
+            background: rgba(255,255,255,0.1);
+            color: #00d4ff;
+        }
+
+        .chat-message-wrapper .copy-btn.copied {
+            opacity: 1;
+            color: #51cf66;
+            background: rgba(81, 207, 102, 0.15);
+        }
+
+        .chat-message-wrapper .chat-message ::selection {
+            background: rgba(0, 212, 255, 0.25);
+            color: #ffffff;
+        }
+
+        body.style-cloudy .chat-message-wrapper .chat-message ::selection {
+            background: rgba(59, 130, 246, 0.25);
+            color: #1e293b;
+        }
+
+        body.style-cloudy .chat-message-wrapper .copy-btn {
+            background: rgba(0,0,0,0.04);
+            color: #64748b;
+        }
+
+        body.style-cloudy .chat-message-wrapper .copy-btn:hover {
+            background: rgba(0,0,0,0.08);
+            color: #3b82f6;
+        }
+
+        body.style-cloudy .chat-message-wrapper .copy-btn.copied {
+            color: #51cf66;
+            background: rgba(81, 207, 102, 0.15);
+        }
     </style>
 </head>
 <body>
@@ -741,6 +835,8 @@ html_template = r"""
                 charShare: 'Поделиться персонажем',
                 roleUser: '👤 Вы',
                 roleAI: '🧠 AI',
+                copyBtnText: '📋 Копировать',
+                copySuccessText: '✅ Скопировано!',
             },
             uk: {
                 appTitle: 'NeoBrain',
@@ -800,6 +896,8 @@ html_template = r"""
                 charShare: 'Поділитися персонажем',
                 roleUser: '👤 Ви',
                 roleAI: '🧠 ШІ',
+                copyBtnText: '📋 Копіювати',
+                copySuccessText: '✅ Скопійовано!',
             },
             en: {
                 appTitle: 'NeoBrain',
@@ -859,6 +957,8 @@ html_template = r"""
                 charShare: 'Share character',
                 roleUser: '👤 You',
                 roleAI: '🧠 AI',
+                copyBtnText: '📋 Copy',
+                copySuccessText: '✅ Copied!',
             }
         };
 
@@ -874,12 +974,11 @@ html_template = r"""
         const STORAGE_CHARS = 'ai_chat_characters';
 
         // ========================================
-        // ФУНКЦИЯ ОБНОВЛЕНИЯ ЯЗЫКА (ОПТИМИЗИРОВАНА)
+        // ФУНКЦИЯ ОБНОВЛЕНИЯ ЯЗЫКА
         // ========================================
         function updateLanguage(lang) {
             const t = LANG[lang] || LANG.ru;
             
-            // Обновляем все элементы с data-i18n
             document.querySelectorAll('[data-i18n]').forEach(el => {
                 const key = el.getAttribute('data-i18n');
                 if (t[key] !== undefined) {
@@ -887,22 +986,26 @@ html_template = r"""
                 }
             });
             
-            // Обновляем placeholder
             const inputPlaceholder = document.querySelector('[data-i18n-placeholder]');
             if (inputPlaceholder && t.inputPlaceholder) {
                 inputPlaceholder.placeholder = t.inputPlaceholder;
             }
             
-            // Обновляем статус языка
             const langStatus = document.getElementById('languageStatus');
             if (langStatus) langStatus.textContent = '✅ ' + lang.toUpperCase();
             
-            // Сохраняем язык
+            // Обновляем текст кнопок копирования
+            document.querySelectorAll('.copy-btn').forEach(btn => {
+                if (!btn.classList.contains('copied')) {
+                    btn.textContent = t.copyBtnText;
+                }
+            });
+            
             localStorage.setItem('neobrain_lang', lang);
         }
 
         // ========================================
-        // ВЫБОР СТИЛЯ (ИСПРАВЛЕНАЯ ВЕРСИЯ)
+        // ВЫБОР СТИЛЯ
         // ========================================
         function initStyleSelector() {
             const styleSelector = document.getElementById('styleSelector');
@@ -919,7 +1022,6 @@ html_template = r"""
                 btn.addEventListener('click', function() {
                     const style = this.dataset.style;
                     localStorage.setItem('neobrain_style', style);
-                    // Удаляем все старые стили
                     document.body.className = document.body.className
                         .split(' ')
                         .filter(c => !c.startsWith('style-'))
@@ -934,7 +1036,6 @@ html_template = r"""
         // ИНИЦИАЛИЗАЦИЯ
         // ========================================
         document.addEventListener('DOMContentLoaded', function() {
-            // Устанавливаем язык
             const langSelect = document.getElementById('languageSelect');
             if (langSelect) {
                 langSelect.value = currentLang;
@@ -946,28 +1047,13 @@ html_template = r"""
                 });
             }
             
-            // Инициализация стилей
             initStyleSelector();
-            
-            // Инициализация панели
             initPanel();
-            
-            // Инициализация чата
             initChat();
-            
-            // Инициализация провайдеров
             initProviders();
-            
-            // Инициализация тем
             initThemes();
-            
-            // Инициализация персонажей
             initCharacters();
-            
-            // Инициализация кринжометра
             initCringeMeter();
-            
-            // Инициализация отправки сообщений
             initMessageSend();
         });
 
@@ -1057,46 +1143,90 @@ html_template = r"""
         });
 
         // ========================================
-        // ЧАТ
+        // ЧАТ С КОПИРОВАНИЕМ
         // ========================================
         function initChat() {
             const chatContainer = document.getElementById('chatContainer');
             const t = LANG[currentLang] || LANG.ru;
             
-            // Загружаем историю
             const history = JSON.parse(localStorage.getItem('chat_history') || '[]');
             if (history.length > 0) {
                 chatContainer.innerHTML = '';
                 history.forEach(msg => {
-                    const div = document.createElement('div');
-                    div.className = 'chat-message ' + msg.role;
-                    const roleLabel = msg.role === 'user' ? t.roleUser : t.roleAI;
-                    div.innerHTML = '<div class="role">' + roleLabel + '</div>' + msg.content;
-                    chatContainer.appendChild(div);
+                    addMessageToChat(msg.role, msg.content, false);
                 });
                 chatContainer.scrollTop = chatContainer.scrollHeight;
             } else {
-                addMessageToChat('ai', 'Привет! Я AI-помощник NeoBrain.');
+                addMessageToChat('ai', 'Привет! Я AI-помощник NeoBrain.', false);
             }
             historyLoaded = true;
         }
 
-        function addMessageToChat(role, content) {
+        function addMessageToChat(role, content, saveToHistory = true) {
             const t = LANG[currentLang] || LANG.ru;
             const chatContainer = document.getElementById('chatContainer');
+            
+            const wrapper = document.createElement('div');
+            wrapper.className = 'chat-message-wrapper ' + role;
+            
             const div = document.createElement('div');
             div.className = 'chat-message ' + role;
             const roleLabel = role === 'user' ? t.roleUser : t.roleAI;
             div.innerHTML = '<div class="role">' + roleLabel + '</div>' + content;
-            chatContainer.appendChild(div);
+            
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'copy-btn';
+            copyBtn.textContent = t.copyBtnText;
+            copyBtn.title = t.copyBtnText;
+            copyBtn.onclick = function(e) {
+                e.stopPropagation();
+                copyMessageContent(this, content);
+            };
+            
+            wrapper.appendChild(div);
+            wrapper.appendChild(copyBtn);
+            chatContainer.appendChild(wrapper);
             chatContainer.scrollTop = chatContainer.scrollHeight;
             
-            if (historyLoaded) {
+            if (saveToHistory && historyLoaded) {
                 let history = JSON.parse(localStorage.getItem('chat_history') || '[]');
                 history.push({ role: role, content: content, timestamp: Date.now() });
                 if (history.length > 100) history = history.slice(-100);
                 localStorage.setItem('chat_history', JSON.stringify(history));
             }
+        }
+
+        function copyMessageContent(btn, text) {
+            const t = LANG[currentLang] || LANG.ru;
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = text;
+            const plainText = tempDiv.textContent || tempDiv.innerText || '';
+            
+            navigator.clipboard.writeText(plainText).then(() => {
+                btn.textContent = t.copySuccessText;
+                btn.classList.add('copied');
+                setTimeout(() => {
+                    btn.textContent = t.copyBtnText;
+                    btn.classList.remove('copied');
+                }, 2000);
+            }).catch(() => {
+                const textarea = document.createElement('textarea');
+                textarea.value = plainText;
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    document.execCommand('copy');
+                    btn.textContent = t.copySuccessText;
+                    btn.classList.add('copied');
+                    setTimeout(() => {
+                        btn.textContent = t.copyBtnText;
+                        btn.classList.remove('copied');
+                    }, 2000);
+                } catch (err) {
+                    alert(t.copyError);
+                }
+                document.body.removeChild(textarea);
+            });
         }
 
         // ========================================
@@ -1132,7 +1262,6 @@ html_template = r"""
                 updateDisplay();
             });
             
-            // API Key
             const saveApiKeyBtn = document.getElementById('saveApiKeyBtn');
             if (saveApiKeyBtn) {
                 saveApiKeyBtn.addEventListener('click', function() {
@@ -1589,7 +1718,7 @@ async def ask(request: Request):
             system_prompt += " Отвечай в разговорном стиле, добавляй немного юмора и иногда используй эмодзи."
         elif cringe_level <= 8:
             system_prompt += " Отвечай с юмором, используй сленг, иногда шути, добавляй эмодзи."
-        else:  # 9-10
+        else:
             system_prompt += " Отвечай максимально кринжово и нелепо! Используй зумерский сленг, капс, много эмодзи, гиперболы. Будь максимально смешным и несерьёзным."
 
         for word in prompt.split():
@@ -1615,70 +1744,173 @@ async def ask(request: Request):
         return {"error": f"Ошибка: {str(e)}"}
 
 # ============================================================
-# ЗАПУСК (С ОБРАБОТКОЙ ОШИБОК)
+# ЗАПУСК (С АВТОЗАПУСКОМ OLLAMA)
 # ============================================================
 def run_app():
-    """Запускает приложение с обработкой ошибок"""
     try:
-        # Проверяем порт
+        is_exe = getattr(sys, 'frozen', False)
+        
+        # ============================================================
+        # АВТОЗАПУСК OLLAMA (ДЛЯ ВСЕХ РЕЖИМОВ)
+        # ============================================================
+        if not is_ollama_running():
+            print("🔄 Ollama не запущена. Автоматический запуск...")
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(
+                        ["ollama", "serve"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                else:
+                    subprocess.Popen(
+                        ["ollama", "serve"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True
+                    )
+                time.sleep(3)
+                print("✅ Ollama запущена!")
+            except Exception as e:
+                print(f"⚠️ Не удалось запустить Ollama: {e}")
+                print("   Запустите вручную: ollama serve")
+        else:
+            print("✅ Ollama уже запущена")
+        # ============================================================
+        
+        if is_exe:
+            log_file = open("neobrain.log", "w", encoding='utf-8')
+            
+            def log(msg):
+                try:
+                    log_file.write(str(msg) + "\n")
+                    log_file.flush()
+                except:
+                    pass
+            
+            log("=== NeoBrain started as .exe ===")
+            log(f"Python version: {sys.version}")
+            log(f"Current directory: {os.getcwd()}")
+            log("Starting server...")
+            
+            def run_server():
+                try:
+                    log("=== uvicorn starting ===")
+                    import io
+                    old_stdout = sys.stdout
+                    old_stderr = sys.stderr
+                    sys.stdout = io.StringIO()
+                    sys.stderr = io.StringIO()
+                    
+                    uvicorn.run(
+                        app, 
+                        host="127.0.0.1", 
+                        port=8000, 
+                        log_level="critical",
+                        access_log=False,
+                        use_colors=False
+                    )
+                    
+                    sys.stdout = old_stdout
+                    sys.stderr = old_stderr
+                except Exception as e:
+                    log(f"Server error: {e}")
+                    import traceback
+                    log(traceback.format_exc())
+            
+            server_thread = threading.Thread(target=run_server, daemon=True)
+            server_thread.start()
+            
+            server_ready = False
+            for i in range(10):
+                log(f"Waiting for server... {i+1}/10")
+                time.sleep(1)
+                try:
+                    response = requests.get("http://127.0.0.1:8000", timeout=1)
+                    log(f"Server response: {response.status_code}")
+                    server_ready = True
+                    break
+                except Exception as e:
+                    log(f"Server not ready: {e}")
+            
+            if not server_ready:
+                log("WARNING: Server may not be ready, but continuing...")
+            
+            log("Opening webview...")
+            
+            try:
+                import webview
+            except ImportError:
+                log("ERROR: pywebview not installed")
+                log_file.close()
+                return
+            
+            log("=" * 55)
+            log("NeoBrain started!")
+            log("Opening application window...")
+            log("Close the window to stop")
+            log("=" * 55)
+            log_file.close()
+            
+            webview.create_window(
+                'NeoBrain',
+                'http://127.0.0.1:8000',
+                width=1200,
+                height=800,
+                resizable=True,
+                fullscreen=False,
+                min_size=(800, 600),
+                confirm_close=True,
+                easy_drag=True
+            )
+            webview.start()
+            return
+        
+        # Обычный режим (из Python)
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         result = sock.connect_ex(('127.0.0.1', 8000))
         sock.close()
         if result == 0:
-            print("⚠️ Порт 8000 уже занят! Закройте старый экземпляр и перезапустите.")
-            input("Нажмите Enter для выхода...")
+            print("WARNING: Port 8000 already in use! Close old instance and restart.")
+            input("Press Enter to exit...")
             return
 
-        # Проверяем Ollama
-        if not is_ollama_running():
-            print("⚠️ Ollama не запущена. Пытаемся запустить...")
-            if not start_ollama():
-                print("⚠️ Ollama не запущена. Локальные модели не будут работать.")
-                print("   Используйте облачные провайдеры в настройках.")
-            else:
-                print("✅ Ollama успешно запущена!")
-        else:
-            print("✅ Ollama уже запущена")
-
-        # Запускаем сервер в фоне
         def run_server():
             try:
                 uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
             except Exception as e:
-                print(f"❌ Ошибка сервера: {e}")
+                print(f"Server error: {e}")
 
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
 
-        # Ждём запуска сервера
         time.sleep(2)
 
-        # Проверяем, что сервер запустился
         try:
             requests.get("http://localhost:8000", timeout=2)
-            print("✅ Сервер запущен!")
+            print("Server started!")
         except:
-            print("❌ Сервер не запустился!")
-            input("Нажмите Enter для выхода...")
+            print("Server failed to start!")
+            input("Press Enter to exit...")
             return
 
-        # Открываем окно
         try:
             import webview
         except ImportError:
-            print("❌ Установи pywebview: python -m pip install pywebview")
-            input("Нажмите Enter для выхода...")
+            print("ERROR: pywebview not installed")
+            input("Press Enter to exit...")
             return
 
         print("\n" + "=" * 55)
-        print("🧠 NeoBrain запущен!")
-        print("📌 Открывается окно приложения...")
-        print(f"🌐 Локальный адрес: http://{LOCAL_IP}:8000")
-        print("⏹️  Закрой окно приложения для остановки")
+        print("NeoBrain started!")
+        print("Opening application window...")
+        print(f"Local address: http://{LOCAL_IP}:8000")
+        print("Close the window to stop")
         print("=" * 55 + "\n")
 
         webview.create_window(
-            '🧠 NeoBrain',
+            'NeoBrain',
             'http://localhost:8000',
             width=1200,
             height=800,
@@ -1691,10 +1923,10 @@ def run_app():
         webview.start()
         
     except KeyboardInterrupt:
-        print("\n⏹️ Приложение остановлено пользователем")
+        print("\nApp stopped by user")
     except Exception as e:
-        print(f"\n❌ Критическая ошибка: {e}")
-        input("\nНажмите Enter для выхода...")
+        print(f"\nCritical error: {e}")
+        input("\nPress Enter to exit...")
 
 if __name__ == "__main__":
     run_app()
