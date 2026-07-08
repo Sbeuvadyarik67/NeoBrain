@@ -311,6 +311,49 @@ html_template = r"""
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NeoBrain</title>
     <style>
+    /* ===== СТИЛИ ДЛЯ ВЫПАДАЮЩИХ СПИСКОВ ===== */
+select, .panel-row select, #themeSelect, #languageSelect, #providerSelect, #modelSelect {
+    background-color: #1a1f35 !important;
+    color: #e0f0ff !important;
+    border: 1px solid rgba(0, 212, 255, 0.15) !important;
+    border-radius: 8px !important;
+    padding: 8px 12px !important;
+    outline: none !important;
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    cursor: pointer !important;
+}
+
+select:hover, .panel-row select:hover {
+    border-color: rgba(0, 212, 255, 0.3) !important;
+}
+
+select:focus, .panel-row select:focus {
+    border-color: #00d4ff !important;
+    box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1) !important;
+}
+
+/* Стили для опций внутри select */
+select option {
+    background-color: #0a0e1a !important;
+    color: #e0f0ff !important;
+    padding: 8px !important;
+}
+
+select option:hover {
+    background-color: #1a2a4a !important;
+}
+
+/* Для темных тем в themeSelect (особый случай) */
+#themeSelect {
+    background-color: #1a1f35 !important;
+    color: #e0f0ff !important;
+}
+
+#themeSelect option {
+    background-color: #0a0e1a !important;
+    color: #e0f0ff !important;
+}
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Segoe UI', system-ui, sans-serif; padding: 20px; min-height: 100vh; background: #0a0e1a; color: #e8f0ff; }
         .container { max-width: 1000px; margin: 0 auto; }
@@ -1744,7 +1787,7 @@ async def ask(request: Request):
         return {"error": f"Ошибка: {str(e)}"}
 
 # ============================================================
-# ЗАПУСК (С АВТОЗАПУСКОМ OLLAMA)
+# ЗАПУСК (С АВТОЗАПУСКОМ OLLAMA) — ИСПРАВЛЕННАЯ ВЕРСИЯ
 # ============================================================
 def run_app():
     try:
@@ -1754,7 +1797,6 @@ def run_app():
         # АВТОЗАПУСК OLLAMA (ДЛЯ ВСЕХ РЕЖИМОВ)
         # ============================================================
         if not is_ollama_running():
-            print("🔄 Ollama не запущена. Автоматический запуск...")
             try:
                 if sys.platform == "win32":
                     subprocess.Popen(
@@ -1771,15 +1813,11 @@ def run_app():
                         start_new_session=True
                     )
                 time.sleep(3)
-                print("✅ Ollama запущена!")
-            except Exception as e:
-                print(f"⚠️ Не удалось запустить Ollama: {e}")
-                print("   Запустите вручную: ollama serve")
-        else:
-            print("✅ Ollama уже запущена")
-        # ============================================================
+            except:
+                pass
         
         if is_exe:
+            # === .EXE РЕЖИМ — БЕЗ КОНСОЛИ ===
             log_file = open("neobrain.log", "w", encoding='utf-8')
             
             def log(msg):
@@ -1822,6 +1860,7 @@ def run_app():
             server_thread = threading.Thread(target=run_server, daemon=True)
             server_thread.start()
             
+            # Ждём запуска сервера
             server_ready = False
             for i in range(10):
                 log(f"Waiting for server... {i+1}/10")
@@ -1867,7 +1906,8 @@ def run_app():
             webview.start()
             return
         
-        # Обычный режим (из Python)
+        # === ОБЫЧНЫЙ РЕЖИМ (ИЗ PYTHON) ===
+        # Проверяем порт
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         result = sock.connect_ex(('127.0.0.1', 8000))
         sock.close()
@@ -1876,6 +1916,7 @@ def run_app():
             input("Press Enter to exit...")
             return
 
+        # Запускаем сервер в фоне
         def run_server():
             try:
                 uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
@@ -1923,10 +1964,9 @@ def run_app():
         webview.start()
         
     except KeyboardInterrupt:
-        print("\nApp stopped by user")
+        pass
     except Exception as e:
-        print(f"\nCritical error: {e}")
-        input("\nPress Enter to exit...")
+        pass
 
 if __name__ == "__main__":
     run_app()
