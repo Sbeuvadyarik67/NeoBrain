@@ -1817,7 +1817,7 @@ def run_app():
                 pass
         
         if is_exe:
-            # === .EXE РЕЖИМ — БЕЗ КОНСОЛИ ===
+            # === .EXE РЕЖИМ — БЕЗ КОНСОЛИ И БЕЗ ПРОВЕРОК ===
             log_file = open("neobrain.log", "w", encoding='utf-8')
             
             def log(msg):
@@ -1860,21 +1860,9 @@ def run_app():
             server_thread = threading.Thread(target=run_server, daemon=True)
             server_thread.start()
             
-            # Ждём запуска сервера
-            server_ready = False
-            for i in range(10):
-                log(f"Waiting for server... {i+1}/10")
-                time.sleep(1)
-                try:
-                    response = requests.get("http://127.0.0.1:8000", timeout=1)
-                    log(f"Server response: {response.status_code}")
-                    server_ready = True
-                    break
-                except Exception as e:
-                    log(f"Server not ready: {e}")
-            
-            if not server_ready:
-                log("WARNING: Server may not be ready, but continuing...")
+            # Просто ждём 3 секунды без проверки
+            log("Waiting 3 seconds for server to start...")
+            time.sleep(3)
             
             log("Opening webview...")
             
